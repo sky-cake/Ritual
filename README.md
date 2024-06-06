@@ -6,7 +6,7 @@ It is built using Python3, and SQLite as a database, although MySQL may be suppo
 
 ## What's special about this particular archiver?
 
-- Ritual is **under 500 lines of code**. For reference, NeoFuuka has 2,600 lines of Python code (including whitespace). Meantwhile, Hayden has over 11,400 lines of C# code (NOT including nearly 3,000 lines of whitespace).
+- Ritual is **under 500 lines of code**. For reference, NeoFuuka has 2,600 lines of Python code (including whitespace). Meanwhile, Hayden has over 11,400 lines of C# code (NOT including nearly 3,000 lines of whitespace).
 
 - The requests library is Ritual's only dependency.
 
@@ -14,7 +14,7 @@ It is built using Python3, and SQLite as a database, although MySQL may be suppo
 
 - Ritual is simple. It has no threading, no complex database, and its main loop is easly to read in under a minute.
 
-Here is how it works.
+Here is how the flexible archive configurations work.
 
 - If a post is blacklisted and whitelisted, it will not be archived - blacklisted filters take precedence over whitelisted filters.
 - If only a blacklist is specified, skip blacklisted posts, and archive everything else.
