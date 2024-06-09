@@ -2,16 +2,18 @@ import os
 
 from utils import make_path, setup_logger
 
-debug = False
 
-request_cooldown_sec = 1.0 # advised by the 4chan API docs
+request_cooldown_sec = 0.3
+add_random = False # add random sleep intervals
 catalog_cooldown_sec = 30.0 # [0, inf]
 
-media_save_path = make_path('media')
 
+media_save_path = make_path('media')
 database = make_path('ritual.db') # sqlite
 
+
 user_agent = ''
+
 
 logger_name = 'ritual'
 log_file = make_path("ritual.log") # or False if you don't want log files

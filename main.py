@@ -3,6 +3,7 @@ import json
 import os
 import re
 import time
+import random
 
 import requests
 
@@ -10,7 +11,7 @@ import configs
 from db import get_connection
 from defs import URL, MediaType
 from utils import (convert_to_asagi_capcode, convert_to_asagi_comment,
-                   make_path, save_json)
+                   make_path)
 
 DOWNLOADED_MEDIA = set()
 
@@ -22,30 +23,34 @@ def get_headers():
     return headers
 
 
+def sleep():
+    s = configs.request_cooldown_sec
+    if configs.add_random:
+        s += random.uniform(0.0, 1.0)
+    time.sleep(s)
+
+
 def fetch_json(url):
     resp = requests.get(url, headers=get_headers())
-    time.sleep(configs.request_cooldown_sec)
+    sleep()
 
-    if resp.status_code not in [200]:
-        raise ValueError(resp)
-    
-    return resp.json()
+    if resp.status_code == 200:
+        return resp.json()
 
 
 def fetch_file(url):
     resp = requests.get(url, headers=get_headers())
-    time.sleep(configs.request_cooldown_sec)
+    sleep()
 
-    if resp.status_code not in [200]:
-        raise ValueError(resp)
-
-    return resp.content
+    if resp.status_code == 200:
+        return resp.content
 
 
 def get_catalog(board):
     catalog = fetch_json(URL.catalog.value.format(board=board))
     configs.logger.info(f'Fetch catalog [{board}]')
-    return catalog
+    if catalog:
+        return catalog
 
 
 def should_archive(board, subject, comment, whitelist=None, blacklist=None):
@@ -101,8 +106,12 @@ def get_threads(board, thread_ids):
     threads = []
     for thread_id in thread_ids:
         thread = fetch_json(URL.thread.value.format(board=board, thread_id=thread_id))
-        configs.logger.info(f'Fetch thread [{board}] [{thread_id}]')
-        threads.append(thread)
+        if thread:
+            configs.logger.info(f'Fetch thread [{board}] [{thread_id}]')
+            threads.append(thread)
+        else:
+            configs.logger.info(f'Thread gone [{board}] [{thread_id}]')
+
     return threads
 
 
@@ -215,8 +224,9 @@ def upsert_threads(cursor, board, threads):
 
 def download_file(url, filename):
     content = fetch_file(url)
-    with open(filename, 'wb') as f:
-        f.write(content)
+    if content:
+        with open(filename, 'wb') as f:
+            f.write(content)
 
 
 def get_filepath(board, media_type, filename):
@@ -278,20 +288,42 @@ def download_thread_media(board, threads, media_type):
                 DOWNLOADED_MEDIA.add(filepath)
 
 
-def main():    
+def create_non_existing_tables():
+    conn = get_connection()
+    cursor = conn.cursor()
+    for board in configs.boards:
+        try:
+            sql = f'SELECT * FROM {board} LIMIT 1;'
+            conn.execute(sql)
+            configs.logger.info(f'{board} tables already exist.')
+        except Exception:
+            configs.logger.info(f'Creating tables for {board}.')
+            with open(make_path('schema.sql')) as f:
+                sql = f.read()
+            sqls = sql.replace('%%BOARD%%', board).split(';')
+            for sql in sqls:
+                conn.execute(sql)
+            conn.commit()
+    cursor.close()
+    conn.close()
+
+
+def main():
+    create_non_existing_tables()
+
     while True:
+        start = time.time()
         conn = get_connection()
         cursor = conn.cursor()
 
         for board in configs.boards:
             catalog = get_catalog(board)
-            if configs.debug: save_json('catalog', catalog)
+            if not catalog:
+                continue
 
             thread_ids = filter_catalog(board, catalog)
-            if configs.debug: save_json('thread_ids', thread_ids)
 
             threads = get_threads(board, thread_ids)
-            if configs.debug: save_json('threads', threads)
 
             if configs.boards[board].get('thread_text'):
                 upsert_threads(cursor, board, threads)
@@ -305,6 +337,8 @@ def main():
 
         cursor.close()
         conn.close()
+
+        configs.logger.info(f'Loop duration: {time.time() - start}s')
 
         configs.logger.info(f'Sleepy time for {configs.catalog_cooldown_sec}s')
         time.sleep(configs.catalog_cooldown_sec)
