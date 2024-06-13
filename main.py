@@ -23,7 +23,11 @@ def get_headers():
     return headers
 
 
-def sleep():
+def sleep(t=None):
+    if t:
+        time.sleep(t)
+        return
+
     s = configs.request_cooldown_sec
     if configs.add_random:
         s += random.uniform(0.0, 1.0)
@@ -31,19 +35,25 @@ def sleep():
 
 
 def fetch_json(url):
-    resp = requests.get(url, headers=get_headers())
-    sleep()
+    try:
+        resp = requests.get(url, headers=get_headers())
+        sleep()
 
-    if resp.status_code == 200:
-        return resp.json()
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception:
+        sleep(20)
 
 
 def fetch_file(url):
-    resp = requests.get(url, headers=get_headers())
-    sleep()
+    try:
+        resp = requests.get(url, headers=get_headers())
+        sleep()
 
-    if resp.status_code == 200:
-        return resp.content
+        if resp.status_code == 200:
+            return resp.content
+    except Exception:
+        sleep(20)
 
 
 def get_catalog(board):
