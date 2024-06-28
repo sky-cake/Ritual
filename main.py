@@ -1,17 +1,17 @@
 import html
 import json
 import os
+import random
 import re
 import time
-import random
+from sqlite3 import Cursor
 
 import requests
 
 import configs
 from db import get_connection
 from defs import URL, MediaType
-from utils import (convert_to_asagi_capcode, convert_to_asagi_comment,
-                   make_path)
+from utils import convert_to_asagi_capcode, convert_to_asagi_comment, make_path
 
 DOWNLOADED_MEDIA = set()
 
@@ -112,16 +112,45 @@ def filter_catalog(board, catalog):
     return thread_ids
 
 
-def get_threads(board, thread_ids):
+def get_non_deleted_post_ids_for_thread_num(cursor: Cursor, board, thread_id):
+    sql = f"""select num from {board} where thread_num = ? and (deleted is null or deleted = 0);"""
+    parameters = [thread_id]
+    cursor.execute(sql, parameters)
+    results = cursor.fetchall()
+    post_ids = [r['num'] for r in results]
+    return post_ids
+
+
+def set_posts_deleted(cursor: Cursor, board, post_ids):
+    sql = f"""update {board} set deleted = 1 where num = ?;"""
+    cursor.executemany(sql, [(p,) for p in post_ids])
+
+
+def get_post_ids_from_thread(thread):
+    return [t['no'] for t in thread['posts']]
+
+
+def get_threads(cursor, board, thread_ids):
     threads = []
-    for thread_id in thread_ids:
+    deleted_post_ids = []
+    for thread_id in thread_ids[30:50]:
         thread = fetch_json(URL.thread.value.format(board=board, thread_id=thread_id))
         if thread:
-            configs.logger.info(f'Fetch thread [{board}] [{thread_id}]')
+            configs.logger.info(f'Fetched thread [{board}] [{thread_id}]')
+
+            previous_post_ids = get_non_deleted_post_ids_for_thread_num(cursor, board, thread_id)
+            if previous_post_ids:
+                current_post_ids = get_post_ids_from_thread(thread)
+                for post_id in previous_post_ids:
+                    if post_id not in current_post_ids:
+                        deleted_post_ids.append(post_id)
+
             threads.append(thread)
         else:
-            configs.logger.info(f'Thread gone [{board}] [{thread_id}]')
+            configs.logger.info(f'Lost Thread [{board}] [{thread_id}]')
 
+    if deleted_post_ids:
+        set_posts_deleted(cursor, board, deleted_post_ids)
     return threads
 
 
@@ -293,7 +322,7 @@ def download_thread_media(board, threads, media_type):
 
                 if (filepath not in DOWNLOADED_MEDIA) and (not os.path.isfile(filepath)):
                     download_file(url, filepath)
-                    configs.logger.info(f"Fetch [{board}] [{post.get('no')}] {media_type.value} - {filename[:4]}/{filename[4:6]}/{filename[6:]} - {filepath}")
+                    configs.logger.info(f"Downloaded [{board}] [{post.get('no')}] {media_type.value} - {filepath}")
 
                 DOWNLOADED_MEDIA.add(filepath)
 
@@ -333,7 +362,7 @@ def main():
 
             thread_ids = filter_catalog(board, catalog)
 
-            threads = get_threads(board, thread_ids)
+            threads = get_threads(cursor, board, thread_ids)
 
             if configs.boards[board].get('thread_text'):
                 upsert_threads(cursor, board, threads)

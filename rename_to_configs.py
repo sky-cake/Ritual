@@ -2,7 +2,6 @@ import os
 
 from utils import make_path, setup_logger
 
-
 request_cooldown_sec = 0.3
 add_random = False # add random sleep intervals
 catalog_cooldown_sec = 30.0 # [0, inf]
