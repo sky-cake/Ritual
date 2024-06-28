@@ -133,7 +133,7 @@ def get_post_ids_from_thread(thread):
 def get_threads(cursor, board, thread_ids):
     threads = []
     deleted_post_ids = []
-    for thread_id in thread_ids[30:50]:
+    for thread_id in thread_ids:
         thread = fetch_json(URL.thread.value.format(board=board, thread_id=thread_id))
         if thread:
             configs.logger.info(f'Fetched thread [{board}] [{thread_id}]')
