@@ -144,6 +144,7 @@ def get_threads(cursor, board, thread_ids):
                 for post_id in previous_post_ids:
                     if post_id not in current_post_ids:
                         deleted_post_ids.append(post_id)
+                        configs.logger.info(f'Post Deleted [{board}] [{thread_id}] [{post_id}]')
 
             threads.append(thread)
         else:
