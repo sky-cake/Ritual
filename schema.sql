@@ -59,3 +59,14 @@ CREATE TABLE IF NOT EXISTS %%BOARD%%_threads (
     locked INTEGER,
     UNIQUE (thread_num)
 );
+
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_%%BOARD%%_num ON %%BOARD%% (num);
+CREATE INDEX IF NOT EXISTS idx_%%BOARD%%_media_id ON %%BOARD%% (media_id);
+CREATE INDEX IF NOT EXISTS idx_%%BOARD%%_thread_num ON %%BOARD%% (thread_num);
+CREATE INDEX IF NOT EXISTS idx_%%BOARD%%_timestamp ON %%BOARD%% (timestamp);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_%%BOARD%%_num ON %%BOARD%%_images (media_id);
+CREATE INDEX IF NOT EXISTS idx_%%BOARD%%_num ON %%BOARD%%_images (media_hash);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_%%BOARD%%_num ON %%BOARD%%_threads (thread_num);
