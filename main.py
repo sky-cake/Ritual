@@ -10,7 +10,7 @@ import requests
 
 import configs
 from db import get_connection
-from defs import URL, MediaType
+from defs import URL, MediaType, h
 from utils import convert_to_asagi_capcode, convert_to_asagi_comment, make_path
 
 DOWNLOADED_MEDIA = set()
@@ -21,6 +21,10 @@ def get_headers():
     if configs.user_agent:
         headers = {'User-Agent', configs.user_agent}
     return headers
+
+
+def get_cookies():
+    return {}
 
 
 def sleep(t=None):
@@ -36,7 +40,7 @@ def sleep(t=None):
 
 def fetch_json(url):
     try:
-        resp = requests.get(url, headers=get_headers())
+        resp = requests.get(url, headers=h)
         sleep()
 
         if resp.status_code == 200:
@@ -47,7 +51,7 @@ def fetch_json(url):
 
 def fetch_file(url):
     try:
-        resp = requests.get(url, headers=get_headers())
+        resp = requests.get(url, headers=h)
         sleep()
 
         if resp.status_code == 200:
@@ -267,7 +271,8 @@ def download_file(url, filename):
     if content:
         with open(filename, 'wb') as f:
             f.write(content)
-
+    else:
+        raise ValueError(f'No content {url=} {filename=}')
 
 def get_filepath(board, media_type, filename):
     tim = filename.split('.')[0]
