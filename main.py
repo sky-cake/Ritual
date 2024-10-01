@@ -7,7 +7,6 @@ import time
 from sqlite3 import Cursor
 
 import requests
-from tqdm import tqdm
 
 import configs
 from db import get_connection
