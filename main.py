@@ -117,7 +117,7 @@ def filter_catalog(board, catalog):
 
 
 def get_non_deleted_post_ids_for_thread_num(cursor: Cursor, board, thread_id):
-    sql = f"""select num from {board} where thread_num = ? and (deleted is null or deleted = 0);"""
+    sql = f"""select num from {board} where thread_num = ? and deleted = 0;"""
     parameters = [thread_id]
     cursor.execute(sql, parameters)
     results = cursor.fetchall()
@@ -190,33 +190,33 @@ def upsert_thread(cursor, board, thread):
                 'media': get_fs_filename_full_media(post),
                 'preview_op': get_fs_filename_thumbnail(post) if i == 0 else None,
                 'preview_reply': get_fs_filename_thumbnail(post) if i != 0 else None,
-                # 'total': post.get('total'), # archive attribute
-                # 'banned': post.get('banned'), # archive attribute
+                'total': 0,
+                'banned': 0,
             }
             media_id = do_upsert(cursor, f'{board}_images', d_image, 'media_hash', 'media_id')
             assert media_id
 
         d_board = {
             # 'doc_id': post.get('doc_id'), # autoincremented
-            'media_id': media_id,
-            'poster_ip': post.get('poster_ip'),
-            'num': post.get('no'),
-            'subnum': post.get('subnum'),
+            'media_id': media_id or 0,
+            'poster_ip': post.get('poster_ip', '0'),
+            'num': post.get('no', 0),
+            'subnum': post.get('subnum', 0),
             'thread_num': post.get('no') if post.get('resto') == 0 else post.get('resto'),
             'op': 1 if post.get('resto') == 0 else 0,
-            'timestamp': post.get('time'),
-            'timestamp_expired': post.get('archived_on'),
+            'timestamp': post.get('time', 0),
+            'timestamp_expired': post.get('archived_on', 0),
             'preview_orig': get_fs_filename_thumbnail(post),
-            'preview_w': post.get('tn_w'),
-            'preview_h': post.get('tn_h'),
+            'preview_w': post.get('tn_w', 0),
+            'preview_h': post.get('tn_h', 0),
             'media_filename': html.unescape(f"{post.get('filename')}{post.get('ext')}") if post.get('filename') and post.get('ext') else None,
-            'media_w': post.get('w'),
-            'media_h': post.get('h'),
-            'media_size': post.get('fsize'),
+            'media_w': post.get('w', 0),
+            'media_h': post.get('h', 0),
+            'media_size': post.get('fsize', 0),
             'media_hash': post.get('md5'),
             'media_orig': get_fs_filename_full_media(post),
-            'spoiler': post.get('spoiler'),
-            'deleted': post.get('filedeleted'),
+            'spoiler': post.get('spoiler', 0),
+            'deleted': post.get('filedeleted', 0),
             'capcode': convert_to_asagi_capcode(post.get('capcode')),
             'email': post.get('email'),
             'name': html.unescape(post.get('name')) if post.get('name') else None,
@@ -224,8 +224,8 @@ def upsert_thread(cursor, board, thread):
             'title': html.unescape(post.get('sub')) if post.get('sub') else None,
             'comment': convert_to_asagi_comment(post.get('com')),
             'delpass': post.get('delpass'),
-            'sticky': post.get('sticky'),
-            'locked': post.get('closed'),
+            'sticky': post.get('sticky', 0),
+            'locked': post.get('closed', 0),
             'poster_hash': post.get('id'),
             'poster_country': post.get('country_name'),
             'exif': json.dumps({'uniqueIps': int(post.get('unique_ips'))}) if post.get('unique_ips') else None,
@@ -239,11 +239,11 @@ def upsert_thread(cursor, board, thread):
         'time_bump': thread['posts'][-1]['time'],
         'time_ghost': None,
         'time_ghost_bump': None,
-        'time_last_modified': None,
+        'time_last_modified': 0,
         'nreplies': len(thread['posts']) - 1,
         'nimages': len([None for post in thread['posts'] if post_has_file(post)]),
-        'sticky': None,
-        'locked': None,
+        'sticky': 0,
+        'locked': 0,
     }
     do_upsert(cursor, f'{board}_threads', d_thread, 'thread_num', 'thread_num')
 
