@@ -1,4 +1,5 @@
 import sqlite3
+
 from tqdm import tqdm
 
 all_4chan_boards = {

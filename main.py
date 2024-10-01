@@ -7,6 +7,7 @@ import time
 from sqlite3 import Cursor
 
 import requests
+from tqdm import tqdm
 
 import configs
 from db import get_connection
@@ -62,7 +63,7 @@ def fetch_file(url):
 
 def get_catalog(board):
     catalog = fetch_json(URL.catalog.value.format(board=board))
-    configs.logger.info(f'Fetch catalog [{board}]')
+    configs.logger.info(f'[{board}] Downloaded catalog')
     if catalog:
         return catalog
 
@@ -140,7 +141,7 @@ def get_threads(cursor, board, thread_ids):
     for thread_id in thread_ids:
         thread = fetch_json(URL.thread.value.format(board=board, thread_id=thread_id))
         if thread:
-            configs.logger.info(f'Fetched thread [{board}] [{thread_id}]')
+            configs.logger.info(f'[{board}] Found thread [{thread_id}]')
 
             previous_post_ids = get_non_deleted_post_ids_for_thread_num(cursor, board, thread_id)
             if previous_post_ids:
@@ -148,11 +149,11 @@ def get_threads(cursor, board, thread_ids):
                 for post_id in previous_post_ids:
                     if post_id not in current_post_ids:
                         deleted_post_ids.append(post_id)
-                        configs.logger.info(f'Post Deleted [{board}] [{thread_id}] [{post_id}]')
+                        configs.logger.info(f'[{board}] Post Deleted [{thread_id}] [{post_id}]')
 
             threads.append(thread)
         else:
-            configs.logger.info(f'Lost Thread [{board}] [{thread_id}]')
+            configs.logger.info(f'[{board}] Lost Thread [{thread_id}]')
 
     if deleted_post_ids:
         set_posts_deleted(cursor, board, deleted_post_ids)
@@ -328,7 +329,7 @@ def download_thread_media(board, threads, media_type):
 
                 if (filepath not in DOWNLOADED_MEDIA) and (not os.path.isfile(filepath)):
                     download_file(url, filepath)
-                    configs.logger.info(f"Downloaded [{board}] [{post.get('no')}] {media_type.value} - {filepath}")
+                    configs.logger.info(f"[{board}] Downloaded [{media_type.value}] {filepath}")
 
                 DOWNLOADED_MEDIA.add(filepath)
 
@@ -340,9 +341,9 @@ def create_non_existing_tables():
         try:
             sql = f'SELECT * FROM {board} LIMIT 1;'
             conn.execute(sql)
-            configs.logger.info(f'{board} tables already exist.')
+            configs.logger.info(f'[{board}] Tables already exist.')
         except Exception:
-            configs.logger.info(f'Creating tables for {board}.')
+            configs.logger.info(f'[{board}] Creating tables.')
             with open(make_path('schema.sql')) as f:
                 sql = f.read()
             sqls = sql.replace('%%BOARD%%', board).split(';')
@@ -357,11 +358,14 @@ def main():
     create_non_existing_tables()
 
     while True:
-        start = time.time()
         conn = get_connection()
         cursor = conn.cursor()
 
+        configs.logger.info(f'Loop Started')
+        times = {}
         for board in configs.boards:
+            start = time.time()
+
             catalog = get_catalog(board)
             if not catalog:
                 continue
@@ -380,12 +384,16 @@ def main():
             if configs.boards[board].get('dl_thumbs'):
                 download_thread_media(board, threads, MediaType.thumbnail)
 
+            times[board] = round((time.time() - start) / 60, 2) # minutes
+
         cursor.close()
         conn.close()
 
-        configs.logger.info(f'Loop duration: {time.time() - start}s')
-
-        configs.logger.info(f'Sleepy time for {configs.catalog_cooldown_sec}s')
+        configs.logger.info(f'Loop Completed')
+        configs.logger.info(f'Duration for each board:')
+        [configs.logger.info(f'[{b}]: {times[b]}m') for b in times]
+        configs.logger.info(f'Duration total: {sum(times.values())}m')
+        configs.logger.info(f'Going to sleep for {configs.catalog_cooldown_sec}s')
         time.sleep(configs.catalog_cooldown_sec)
 
 
