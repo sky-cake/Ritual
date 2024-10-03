@@ -168,6 +168,7 @@ def thread_modified(board: str, thread: dict, d_last_modified: dict) -> bool:
 
 def filter_catalog(board: str, catalog: dict, d_last_modified: dict) -> list[int]:
     thread_ids = []
+    not_modified_thread_count = 0
     for page in catalog:
         for thread in page['threads']:
 
@@ -179,12 +180,15 @@ def filter_catalog(board: str, catalog: dict, d_last_modified: dict) -> list[int
             if not should_archive(board, subject, comment):
                 continue
 
-            no = thread.get('no')
             if not thread_modified(board, thread, d_last_modified):
-                configs.logger.info(f'[{board}] [{no}] not modified.')
+                not_modified_thread_count += 1
                 continue
 
             thread_ids.append(thread.get('no'))
+
+    if not_modified_thread_count > 0:
+        configs.logger.info(f'[{board}] {not_modified_thread_count} threads not modified.')
+
     return thread_ids
 
 
@@ -463,11 +467,16 @@ def main():
         cursor.close()
         conn.close()
 
-        configs.logger.info(f'Loop Completed')
-        configs.logger.info(f'Duration for each board:')
-        [configs.logger.info(f'[{b}]: {times[b]}m') for b in times]
-        configs.logger.info(f'Duration total: {round(sum(times.values()), 1)}m')
-        configs.logger.info(f'Going to sleep for {configs.catalog_cooldown_sec}s')
+        configs.logger.info("Loop Completed")
+        configs.logger.info("Duration for each board:")
+
+        for board, duration in times.items():
+            configs.logger.info(f' {board:<4} {duration:.1f}m')
+
+        total_duration = round(sum(times.values()), 1)
+        configs.logger.info(f"Total Duration: {total_duration}m")
+        configs.logger.info(f"Going to sleep for {configs.catalog_cooldown_sec}s")
+
         time.sleep(configs.catalog_cooldown_sec)
 
 
