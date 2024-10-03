@@ -4,6 +4,7 @@ import os
 import random
 import re
 import time
+from collections import OrderedDict
 from sqlite3 import Cursor
 
 import requests
@@ -13,7 +14,38 @@ from db import get_connection
 from defs import URL, MediaType, h
 from utils import convert_to_asagi_capcode, convert_to_asagi_comment, make_path
 
-DOWNLOADED_MEDIA = set()
+
+class MaxQueue:
+    def __init__(self, boards, max_items_per_board=150*151):
+        """
+        threads_per_catalog = 150
+        images_per_thread = 151
+        """
+
+        # use OrderedDict for lookup speed, rather than a list
+        self.items = {b: OrderedDict() for b in boards}
+
+        self.max_items_per_board = max_items_per_board
+
+    def add(self, board: str, filepath: str):
+        board_items = self.items[board]
+
+        if filepath in board_items:
+            return
+
+        while len(board_items) >= self.max_items_per_board:
+            board_items.popitem(last=False)
+
+        board_items[filepath] = 0
+
+    def __contains__(self, filepath: str) -> bool:
+        return any(filepath in board_items for board_items in self.items.values())
+
+    def __getitem__(self, board: str) -> OrderedDict:
+        return self.items[board]
+
+
+DOWNLOADED_MEDIA = MaxQueue(configs.boards)
 
 
 def get_headers():
@@ -38,7 +70,7 @@ def sleep(t=None):
     time.sleep(s)
 
 
-def fetch_json(url):
+def fetch_json(url) -> dict:
     try:
         resp = requests.get(url, headers=h)
         sleep()
@@ -60,7 +92,7 @@ def fetch_file(url):
         sleep(20)
 
 
-def get_catalog(board):
+def get_catalog(board) -> dict:
     catalog = fetch_json(URL.catalog.value.format(board=board))
     configs.logger.info(f'[{board}] Downloaded catalog')
     if catalog:
@@ -99,7 +131,42 @@ def should_archive(board, subject, comment, whitelist=None, blacklist=None):
     return True
 
 
-def filter_catalog(board, catalog):
+def thread_modified(board: str, thread: dict, d_last_modified: dict) -> bool:
+    """`True` indicates we should download the thread. Also handles the `d_last_modified` cache."""
+    no = thread.get('no')
+    last_modified = thread.get('last_modified')
+
+    if board not in d_last_modified:
+        d_last_modified[board] = {}
+    if no not in d_last_modified[board]:
+        d_last_modified[board][no] = {}
+
+    last_modified_d = d_last_modified[board][no].get('last_modified')
+
+    # Update the thread's last modified time in d_last_modified.
+    d_last_modified[board][no]['last_modified'] = last_modified
+
+    # Don't let the dict grow over N entries per board.
+    N = 200
+    if len(d_last_modified[board]) > N:
+        # In case of multiple stickies, or similar special threads, we delete M oldest threads
+        M = 10
+        tmp_nos = sorted(d_last_modified[board], key=lambda no: d_last_modified[board][no]['last_modified'])
+        for stale_no in tmp_nos[:M]:
+            del d_last_modified[board][stale_no]
+
+    # last_modified changed
+    if last_modified and last_modified_d and last_modified != last_modified_d:
+        return True
+
+    # new thread
+    if last_modified_d is None:
+        return True
+
+    return False
+
+
+def filter_catalog(board: str, catalog: dict, d_last_modified: dict) -> list[int]:
     thread_ids = []
     for page in catalog:
         for thread in page['threads']:
@@ -112,11 +179,16 @@ def filter_catalog(board, catalog):
             if not should_archive(board, subject, comment):
                 continue
 
+            no = thread.get('no')
+            if not thread_modified(board, thread, d_last_modified):
+                configs.logger.info(f'[{board}] [{no}] not modified.')
+                continue
+
             thread_ids.append(thread.get('no'))
     return thread_ids
 
 
-def get_non_deleted_post_ids_for_thread_num(cursor: Cursor, board, thread_id):
+def get_non_deleted_post_ids_for_thread_num(cursor: Cursor, board: str, thread_id: int) -> list[int]:
     sql = f"""select num from {board} where thread_num = ? and deleted = 0;"""
     parameters = [thread_id]
     cursor.execute(sql, parameters)
@@ -125,16 +197,16 @@ def get_non_deleted_post_ids_for_thread_num(cursor: Cursor, board, thread_id):
     return post_ids
 
 
-def set_posts_deleted(cursor: Cursor, board, post_ids):
+def set_posts_deleted(cursor: Cursor, board: str, post_ids: list[int]) -> list[int]:
     sql = f"""update {board} set deleted = 1 where num = ?;"""
     cursor.executemany(sql, [(p,) for p in post_ids])
 
 
-def get_post_ids_from_thread(thread):
+def get_post_ids_from_thread(thread: dict) -> list[int]:
     return [t['no'] for t in thread['posts']]
 
 
-def get_threads(cursor, board, thread_ids):
+def get_threads(cursor: Cursor, board: str, thread_ids: list[int]) -> list[dict]:
     threads = []
     deleted_post_ids = []
     for thread_id in thread_ids:
@@ -159,25 +231,25 @@ def get_threads(cursor, board, thread_ids):
     return threads
 
 
-def post_has_file(post):
+def post_has_file(post: dict) -> bool:
     return post.get('tim') and post.get('ext') and post.get('md5')
 
 
-def get_fs_filename_full_media(post):
+def get_fs_filename_full_media(post: dict) -> str|None:
     if post_has_file(post):
         return f"{post.get('tim')}{post.get('ext')}"
 
 
-def get_fs_filename_thumbnail(post):
+def get_fs_filename_thumbnail(post: dict) -> str|None:
     if post_has_file(post):
         return f"{post.get('tim')}s.jpg"
 
 
-def post_is_sticky(post):
+def post_is_sticky(post: dict) -> bool:
     return post.get('sticky') == 1
 
 
-def upsert_thread(cursor, board, thread):
+def upsert_thread(cursor: Cursor, board: str, thread: dict) -> None:
     for i, post in enumerate(thread['posts']):
         if post_is_sticky(post):
             continue
@@ -248,7 +320,7 @@ def upsert_thread(cursor, board, thread):
     do_upsert(cursor, f'{board}_threads', d_thread, 'thread_num', 'thread_num')
 
 
-def do_upsert(cursor, table, d, conflict_col, returning):
+def do_upsert(cursor: Cursor, table: str, d: dict, conflict_col: str, returning: str):
     sql_cols = ', '.join(d)
     sql_placeholders = ', '.join(['?'] * len(d))
     sql_conflict = ', '.join([f'{col}=?' for col in d])
@@ -261,12 +333,12 @@ def do_upsert(cursor, table, d, conflict_col, returning):
     return result[returning]
 
 
-def upsert_threads(cursor, board, threads):
+def upsert_threads(cursor, board: str, threads: list[dict]):
     for thread in threads:
         upsert_thread(cursor, board, thread)
 
 
-def download_file(url, filename):
+def download_file(url: str, filename: str):
     content = fetch_file(url)
     if content:
         with open(filename, 'wb') as f:
@@ -274,7 +346,8 @@ def download_file(url, filename):
     else:
         raise ValueError(f'No content {url=} {filename=}')
 
-def get_filepath(board, media_type, filename):
+
+def get_filepath(board: str, media_type, filename: str) -> str:
     tim = filename.split('.')[0]
     assert len(tim) >= 6 and tim[:6].isdigit()
     dir_path = make_path(configs.media_save_path, board, media_type, filename[:4], filename[4:6])
@@ -283,7 +356,7 @@ def get_filepath(board, media_type, filename):
     return os.path.join(dir_path, filename)
 
 
-def match_sub_and_com(post_op, pattern):
+def match_sub_and_com(post_op: dict, pattern: str):
     sub = post_op.get('sub')
     com = post_op.get('com')
 
@@ -296,7 +369,7 @@ def match_sub_and_com(post_op, pattern):
     return False
 
 
-def download_thread_media(board, threads, media_type):
+def download_thread_media(board: str, threads: list[dict], media_type):
     for thread in threads:
         for post in thread['posts']:
             if post_has_file(post):
@@ -326,11 +399,11 @@ def download_thread_media(board, threads, media_type):
                 else:
                     raise ValueError(media_type)
 
-                if (filepath not in DOWNLOADED_MEDIA) and (not os.path.isfile(filepath)):
+                if (filepath not in DOWNLOADED_MEDIA[board]) and (not os.path.isfile(filepath)):
                     download_file(url, filepath)
                     configs.logger.info(f"[{board}] Downloaded [{media_type.value}] {filepath}")
 
-                DOWNLOADED_MEDIA.add(filepath)
+                DOWNLOADED_MEDIA.add(board, filepath)
 
 
 def create_non_existing_tables():
@@ -356,6 +429,8 @@ def create_non_existing_tables():
 def main():
     create_non_existing_tables()
 
+    d_last_modified = dict() # {g: {123: 1717755968, 124: 1717755999}}
+
     while True:
         conn = get_connection()
         cursor = conn.cursor()
@@ -369,7 +444,7 @@ def main():
             if not catalog:
                 continue
 
-            thread_ids = filter_catalog(board, catalog)
+            thread_ids = filter_catalog(board, catalog, d_last_modified)
 
             threads = get_threads(cursor, board, thread_ids)
 
@@ -391,7 +466,7 @@ def main():
         configs.logger.info(f'Loop Completed')
         configs.logger.info(f'Duration for each board:')
         [configs.logger.info(f'[{b}]: {times[b]}m') for b in times]
-        configs.logger.info(f'Duration total: {sum(times.values())}m')
+        configs.logger.info(f'Duration total: {round(sum(times.values()), 1)}m')
         configs.logger.info(f'Going to sleep for {configs.catalog_cooldown_sec}s')
         time.sleep(configs.catalog_cooldown_sec)
 
