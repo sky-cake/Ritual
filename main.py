@@ -180,7 +180,7 @@ def filter_catalog(board: str, catalog: dict, d_last_modified: dict) -> list[int
             if not should_archive(board, subject, comment):
                 continue
 
-            if configs.reinitialize or not thread_modified(board, thread, d_last_modified):
+            if not thread_modified(board, thread, d_last_modified):
                 not_modified_thread_count += 1
                 continue
 
@@ -431,7 +431,16 @@ def create_non_existing_tables():
 
 
 def get_op_threads(threads):
-    return [{'posts': [t for t in threads[0]['posts'] if t['resto'] == 0]}]
+    if not threads:
+        return []
+
+    op_threads = []
+    for thread in threads:
+        for post in thread['posts']:
+            if post['resto'] == 0:
+                op_threads.append({'posts': [post]})
+
+    return op_threads
 
 
 def main():
@@ -475,8 +484,6 @@ def main():
                 download_thread_media(board, threads, MediaType.thumbnail)
 
             times[board] = round((time.time() - start) / 60, 2) # minutes
-
-            configs.reinitialize = False
 
         cursor.close()
         conn.close()
