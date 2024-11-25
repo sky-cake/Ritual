@@ -6,6 +6,8 @@ request_cooldown_sec = 0.3
 add_random = False # add random sleep intervals
 catalog_cooldown_sec = 30.0 # [0, inf]
 
+reinitialize = True # on restarts, ignore last_modified times and go through all threads
+
 media_save_path = make_path('media')
 database = make_path('ritual.db') # sqlite
 
