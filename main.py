@@ -460,11 +460,11 @@ def main():
                 upsert_threads(cursor, board, threads)
                 conn.commit()
 
-            if configs.boards[board].get('dl_full_media_op') and not configs.boards[board].get('dl_full_media'):
+            if configs.boards[board].get('dl_full_media_op'):
                 op_threads = get_op_threads(threads)
                 download_thread_media(board, op_threads, MediaType.full_media)
 
-            if configs.boards[board].get('dl_thumbs_op') and not configs.boards[board].get('dl_thumbs'):
+            if configs.boards[board].get('dl_thumbs_op'):
                 op_threads = get_op_threads(threads)
                 download_thread_media(board, op_threads, MediaType.thumbnail)
 
