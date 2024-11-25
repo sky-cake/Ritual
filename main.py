@@ -180,7 +180,7 @@ def filter_catalog(board: str, catalog: dict, d_last_modified: dict) -> list[int
             if not should_archive(board, subject, comment):
                 continue
 
-            if configs.reinitialize or not thread_modified(board, thread, d_last_modified):
+            if not configs.reinitialize and not thread_modified(board, thread, d_last_modified):
                 not_modified_thread_count += 1
                 continue
 
