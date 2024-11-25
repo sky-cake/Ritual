@@ -180,7 +180,7 @@ def filter_catalog(board: str, catalog: dict, d_last_modified: dict) -> list[int
             if not should_archive(board, subject, comment):
                 continue
 
-            if not thread_modified(board, thread, d_last_modified):
+            if configs.reinitialize or not thread_modified(board, thread, d_last_modified):
                 not_modified_thread_count += 1
                 continue
 
@@ -475,6 +475,8 @@ def main():
                 download_thread_media(board, threads, MediaType.thumbnail)
 
             times[board] = round((time.time() - start) / 60, 2) # minutes
+
+            configs.reinitialize = False
 
         cursor.close()
         conn.close()
