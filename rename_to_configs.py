@@ -47,6 +47,11 @@ boards = {
         'dl_thumbs': True,
         'dl_full_media': False,
         'thread_text': True,
+    },
+    't': {
+        'dl_full_media_op': True, # download all thread text, but only thumbnails and full media for the OP posts on /t/
+        'dl_thumbs_op': True,
+        'thread_text': True,
     }
 }
 

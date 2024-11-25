@@ -373,7 +373,7 @@ def match_sub_and_com(post_op: dict, pattern: str):
     return False
 
 
-def download_thread_media(board: str, threads: list[dict], media_type):
+def download_thread_media(board: str, threads: list[dict], media_type: MediaType):
     for thread in threads:
         for post in thread['posts']:
             if post_has_file(post):
@@ -430,6 +430,10 @@ def create_non_existing_tables():
     conn.close()
 
 
+def get_op_threads(threads):
+    return [{'posts': [t for t in threads[0]['posts'] if t['resto'] == 0]}]
+
+
 def main():
     create_non_existing_tables()
 
@@ -455,6 +459,14 @@ def main():
             if configs.boards[board].get('thread_text'):
                 upsert_threads(cursor, board, threads)
                 conn.commit()
+
+            if configs.boards[board].get('dl_full_media_op') and not configs.boards[board].get('dl_full_media'):
+                op_threads = get_op_threads(threads)
+                download_thread_media(board, op_threads, MediaType.full_media)
+
+            if configs.boards[board].get('dl_thumbs_op') and not configs.boards[board].get('dl_thumbs'):
+                op_threads = get_op_threads(threads)
+                download_thread_media(board, op_threads, MediaType.thumbnail)
 
             if configs.boards[board].get('dl_full_media'):
                 download_thread_media(board, threads, MediaType.full_media)
