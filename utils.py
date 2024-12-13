@@ -13,7 +13,7 @@ def setup_logger(logger_name, log_file=False, stdout=True, file_rotate_size=5 * 
     logger = logging.getLogger(logger_name)
     logger.setLevel(log_level)
 
-    formatter = logging.Formatter('%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+    formatter = logging.Formatter('%(message)s')
 
     if stdout:
         console_handler = logging.StreamHandler()
