@@ -9,7 +9,7 @@ from logging.handlers import RotatingFileHandler
 def make_path(*filepaths):
     return os.path.join(os.path.abspath(os.path.dirname(__file__)), *filepaths)
 
-def setup_logger(logger_name, log_file=False, stdout=True, file_rotate_size=5 * 1024 * 1024, max_files=3, log_level=logging.INFO):
+def setup_logger(logger_name, log_file=False, stdout=True, file_rotate_size=1 * 1024 * 1024, max_files=3, log_level=logging.INFO):
     logger = logging.getLogger(logger_name)
     logger.setLevel(log_level)
 
