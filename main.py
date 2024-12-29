@@ -239,12 +239,12 @@ def post_has_file(post: dict) -> bool:
     return post.get('tim') and post.get('ext') and post.get('md5')
 
 
-def get_fs_filename_full_media(post: dict) -> str|None:
+def get_fs_filename_full_media(post: dict) -> str:
     if post_has_file(post):
         return f"{post.get('tim')}{post.get('ext')}"
 
 
-def get_fs_filename_thumbnail(post: dict) -> str|None:
+def get_fs_filename_thumbnail(post: dict) -> str:
     if post_has_file(post):
         return f"{post.get('tim')}s.jpg"
 
@@ -253,7 +253,7 @@ def post_is_sticky(post: dict) -> bool:
     return post.get('sticky') == 1
 
 
-def upsert_thread(cursor: Cursor, board: str, thread: dict) -> None:
+def upsert_thread(cursor: Cursor, board: str, thread: dict):
     for i, post in enumerate(thread['posts']):
         if post_is_sticky(post):
             continue
