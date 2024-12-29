@@ -60,6 +60,41 @@ CREATE TABLE IF NOT EXISTS %%BOARD%%_threads (
     UNIQUE (thread_num)
 );
 
+CREATE TABLE IF NOT EXISTS %%BOARD%%_deleted (
+    doc_id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    media_id INTEGER NOT NULL,
+    poster_ip TEXT NOT NULL,
+    num INTEGER NOT NULL,
+    subnum INTEGER NOT NULL,
+    thread_num INTEGER NOT NULL,
+    op INTEGER NOT NULL,
+    timestamp INTEGER NOT NULL,
+    timestamp_expired INTEGER NOT NULL,
+    preview_orig TEXT,
+    preview_w INTEGER NOT NULL,
+    preview_h INTEGER NOT NULL,
+    media_filename TEXT,
+    media_w INTEGER NOT NULL,
+    media_h INTEGER NOT NULL,
+    media_size INTEGER NOT NULL,
+    media_hash TEXT,
+    media_orig TEXT,
+    spoiler INTEGER NOT NULL,
+    deleted INTEGER NOT NULL,
+    capcode TEXT NOT NULL,
+    email TEXT,
+    name TEXT,
+    trip TEXT,
+    title TEXT,
+    comment TEXT,
+    delpass TEXT,
+    sticky INTEGER NOT NULL,
+    locked INTEGER NOT NULL,
+    poster_hash TEXT,
+    poster_country TEXT,
+    exif TEXT,
+    UNIQUE (num)
+);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_%%BOARD%%_num ON %%BOARD%% (num);
 CREATE INDEX IF NOT EXISTS idx_%%BOARD%%_media_id ON %%BOARD%% (media_id);
