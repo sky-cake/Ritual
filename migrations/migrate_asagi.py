@@ -83,7 +83,7 @@ all_4chan_boards = {
 }
 
 # set your paths!
-# then run `python3 migrate_asagi.py`
+# then run `python3.12 migrate_asagi.py`
 db_path = '/home/USER/Documents/ritual/migrations/ritual_bk.db'
 sql_file_path = '/home/USER/Documents/ritual/migrations/not_null_migration.sql'
 

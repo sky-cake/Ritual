@@ -2,7 +2,7 @@
 
 Ritual is a **very** simple 4chan archiver that complies to the Asagi schema.
 
-It is built using Python3, and **SQLite as a database**, although MySQL may be supported in the future.
+It is built using Python, and **SQLite as a database**, although MySQL may be supported in the future.
 
 ## What's special about this particular archiver?
 
@@ -21,11 +21,11 @@ Ritual will create schemas for you.
 
 1. Create a file called `configs.py` using `rename_to_configs.py`, and configure it.
 2. Create a virtualenv and install dependencies,
-    - `python3 -m venv venv`
+    - `python3.12 -m venv venv`
     - `source venv/bin/activate`
-    - `python3 -m pip install -r requirements.txt`
+    - `python3.12 -m pip install -r requirements.txt`
 3. `screen -S ritual` (you might need to `sudo apt install screen`)
-4. `python3 main.py` to run the scraper.
+4. `python3.12 main.py` to run the scraper.
 5. `ctrl-A`, `d` to leave the screen
 6. `screen -r ritual` to reattach to the screen
 
