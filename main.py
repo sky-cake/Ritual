@@ -290,7 +290,7 @@ def upsert_thread(cursor: Cursor, board: str, thread: dict):
             'preview_orig': get_fs_filename_thumbnail(post),
             'preview_w': post.get('tn_w', 0),
             'preview_h': post.get('tn_h', 0),
-            'media_filename': html.unescape(f"{post.get('filename')}{post.get('ext')}") if post.get('filename') and post.get('ext') else None,
+            'media_filename': html.unescape(f"{post.get('filename')}{post.get('ext')}") if post.get('filename') and post.get('ext') and configs.site == '4chan' else None,
             'media_w': post.get('w', 0),
             'media_h': post.get('h', 0),
             'media_size': post.get('fsize', 0),
@@ -300,10 +300,10 @@ def upsert_thread(cursor: Cursor, board: str, thread: dict):
             'deleted': post.get('filedeleted', 0),
             'capcode': convert_to_asagi_capcode(post.get('capcode')),
             'email': post.get('email'),
-            'name': html.unescape(post.get('name')) if post.get('name') else None,
+            'name': html.unescape(post.get('name')) if post.get('name') and configs.site == '4chan' else None,
             'trip': post.get('trip'),
-            'title': html.unescape(post.get('sub')) if post.get('sub') else None,
-            'comment': convert_to_asagi_comment(post.get('com')),
+            'title': html.unescape(post.get('sub')) if post.get('sub') and configs.site == '4chan' else None,
+            'comment': convert_to_asagi_comment(post.get('com')) if configs.site == '4chan' else post.get('com'),
             'delpass': post.get('delpass'),
             'sticky': post.get('sticky', 0),
             'locked': post.get('closed', 0),
@@ -467,6 +467,7 @@ def main():
 
             catalog = get_catalog(board)
             if not catalog:
+                configs.logger.info(f"Catalog returned {catalog}")
                 continue
 
             thread_ids = filter_catalog(board, catalog, d_last_modified)
