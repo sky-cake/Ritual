@@ -1,16 +1,18 @@
 # Ritual
 
-Ritual is a **very** simple 4chan archiver that complies to the Asagi schema.
+Ritual is a **very** simple 4chan/lainchan archiver that complies to the Asagi schema.
 
-It is built using Python, and **SQLite as a database**, although MySQL may be supported in the future.
+It is built using Python3.12, and SQLite as a database. MySQL may be supported in the future.
 
 ## What's special about this particular archiver?
 
-- Ritual is **under 500 lines of code**. For reference, NeoFuuka has 2,600 lines of Python code (including whitespace). Meanwhile, Hayden has over 11,400 lines of C# code (NOT including nearly 3,000 lines of whitespace).
+- Ritual is under 1,000 lines of python code.
+  - NeoFuuka has 2,600 lines of Python code
+  - Hayden has over 11,400 lines of C# code
 
 - The requests library is Ritual's only dependency.
 
-- The second advantage of Ritual is its **amazingly flexible configurations**. Ritual allows you to choose whether you download text, thumbnails, and/or full media at the thread level - not the global level.
+- The second advantage of Ritual is its **super flexible configurations**. Ritual allows you to choose whether you download text, thumbnails, and/or full media at the thread level - not the global level.
 
 - Ritual is simple. It has no threading, no complex database, and its main loop is easly to read in under a minute.
 
@@ -59,8 +61,6 @@ boards = {
         'thread_text': True, # archive the text if we pass the black/white lists.
     },
     'gif': {
-        'dl_thumbs': False,
-        'dl_full_media': False,
         'thread_text': True, # only gather thread text from /gif/ - no files
     },
     'ck': {

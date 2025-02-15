@@ -11,8 +11,13 @@ import requests
 
 import configs
 from db import get_connection
-from defs import URL, MediaType, h
+from defs import URL4chan, URLlainchan, MediaType, h
 from utils import convert_to_asagi_capcode, convert_to_asagi_comment, make_path
+
+
+URL = URL4chan
+if configs.site == 'lainchan':
+    URL = URLlainchan
 
 
 class MaxQueue:
@@ -386,6 +391,9 @@ def download_thread_media(board: str, threads: list[dict], media_type: MediaType
                     board_thumb_pattern = configs.boards[board].get('dl_thumbs')
                     if isinstance(board_thumb_pattern, str) and not match_sub_and_com(thread['posts'][0], board_thumb_pattern):
                         continue
+
+                    if URL.thumbnail.value is None:
+                        configs.logger.info('Warning: this site does not support thumbnail downloads.')
 
                     url = URL.thumbnail.value.format(board=board, image_id=tim)
                     filename = get_fs_filename_thumbnail(post)

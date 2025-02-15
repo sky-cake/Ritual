@@ -14,6 +14,7 @@ database = make_path('ritual.db') # sqlite
 
 user_agent = ''
 
+site = '4chan' # '4chan' 'lainchan' # use two separate instances of Ritual to archive both sites
 
 logger_name = 'ritual'
 log_file = make_path("ritual.log") # or False if you don't want log files
