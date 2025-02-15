@@ -83,7 +83,7 @@ def fetch_json(url) -> dict:
         if resp.status_code == 200:
             return resp.json()
     except Exception:
-        sleep(20)
+        sleep(5)
 
 
 def fetch_file(url):
@@ -94,7 +94,7 @@ def fetch_file(url):
         if resp.status_code == 200:
             return resp.content
     except Exception:
-        sleep(20)
+        sleep(5)
 
 
 def get_catalog(board) -> dict:
@@ -353,7 +353,7 @@ def download_file(url: str, filename: str):
         with open(filename, 'wb') as f:
             f.write(content)
     else:
-        raise ValueError(f'No content {url=} {filename=}')
+        configs.logger.warning(f'No content {url=} {filename=}')
 
 
 def get_filepath(board: str, media_type, filename: str) -> str:
