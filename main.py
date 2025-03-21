@@ -86,15 +86,27 @@ def fetch_json(url) -> dict:
         sleep(5)
 
 
-def fetch_file(url):
-    try:
+def download_file(url: str, filename: str):
+    ts = [configs.request_cooldown_sec, 4.0, 6.0, 10.0]
+    for i, t in enumerate(ts):
         resp = requests.get(url, headers=h)
-        sleep()
+        if i > 0:
+            configs.request_cooldown_sec += 1.0
+            configs.logger.warning(f'Incrementing 1 sec: {configs.request_cooldown_sec=}')
 
-        if resp.status_code == 200:
-            return resp.content
-    except Exception:
-        sleep(5)
+        sleep(t)
+
+        if resp.status_code != 200:
+            configs.logger.warning(f'{url=} {resp.status_code=}')
+            return
+
+        if resp.status_code == 200 and resp.content:
+            with open(filename, 'wb') as f:
+                f.write(resp.content)
+            return True
+        
+        configs.logger.warning(f'No content {url=} {filename=} {resp.content=}')
+    configs.logger.warning(f'Max retries exceeded {url=} {filename=}')
 
 
 def get_catalog(board) -> dict:
@@ -347,15 +359,6 @@ def upsert_threads(cursor, board: str, threads: list[dict]):
         upsert_thread(cursor, board, thread)
 
 
-def download_file(url: str, filename: str):
-    content = fetch_file(url)
-    if content:
-        with open(filename, 'wb') as f:
-            f.write(content)
-    else:
-        configs.logger.warning(f'No content {url=} {filename=}')
-
-
 def get_filepath(board: str, media_type, filename: str) -> str:
     tim = filename.split('.')[0]
     assert len(tim) >= 6 and tim[:6].isdigit()
@@ -412,8 +415,9 @@ def download_thread_media(board: str, threads: list[dict], media_type: MediaType
                     raise ValueError(media_type)
 
                 if (filepath not in DOWNLOADED_MEDIA[board]) and (not os.path.isfile(filepath)):
-                    download_file(url, filepath)
-                    configs.logger.info(f"[{board}] Downloaded [{media_type.value}] {filepath}")
+                    result = download_file(url, filepath)
+                    if result:
+                        configs.logger.info(f"[{board}] Downloaded [{media_type.value}] {filepath}")
 
                 DOWNLOADED_MEDIA.add(board, filepath)
 
