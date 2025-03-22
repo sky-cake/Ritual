@@ -2,9 +2,11 @@ import os
 
 from utils import make_path, setup_logger
 
-request_cooldown_sec = 0.3
+request_cooldown_sec = 1.2
+loop_cooldown_sec = 30.0
+video_cooldown_sec = 3.2
+image_cooldown_sec = 2.2
 add_random = False # add random sleep intervals
-catalog_cooldown_sec = 30.0 # [0, inf]
 
 reinitialize = True # on restarts, ignore last_modified times and go through all threads
 
@@ -21,6 +23,7 @@ log_file = make_path("ritual.log") # or False if you don't want log files
 MB_5 = 5 * 1024 * 1024
 logger = setup_logger(logger_name, log_file=log_file, stdout=True, file_rotate_size=MB_5, max_files=3)
 
+make_thumbnails = True # don't download thumbnails, create them when downloading full media
 
 # ARCHIVE RULES - What to archive.
 

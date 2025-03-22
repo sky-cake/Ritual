@@ -6,7 +6,7 @@ import re
 import time
 from collections import OrderedDict
 from sqlite3 import Cursor
-
+import subprocess
 import requests
 
 import configs
@@ -64,35 +64,98 @@ def get_cookies():
     return {}
 
 
-def sleep(t=None):
-    if t:
-        time.sleep(t)
-        return
-
-    s = configs.request_cooldown_sec
+def sleep(t: int):
     if configs.add_random:
-        s += random.uniform(0.0, 1.0)
-    time.sleep(s)
+        t += random.uniform(0.0, 1.0)
+
+    time.sleep(t)
 
 
 def fetch_json(url) -> dict:
     try:
         resp = requests.get(url, headers=h)
-        sleep()
+        sleep(configs.request_cooldown_sec)
 
         if resp.status_code == 200:
             return resp.json()
     except Exception:
-        sleep(5)
+        sleep(7.5)
+
+
+def is_video_path(path: str) -> bool:
+    return path.endswith(('webm', 'mp4', 'gif'))
+
+
+def is_image_path(path: str) -> bool:
+    return path.endswith(('jpg', 'jpeg', 'png'))
+
+
+def create_thumbnail_from_video(video_path: str, out_path: str, width: int=400, height: int=400, quality: int=25):
+    """width and height form the max box boundary for the resulting image"""
+
+    if not is_video_path(video_path):
+        raise ValueError(video_path)
+
+    command = f"""ffmpeg -i "{video_path}" -pix_fmt rgb24 -q:v 2 -frames:v 1 -f image2pipe - | convert - -resize {width}x{height} -quality {quality} "{out_path}" """
+
+    try:
+        subprocess.run(command, shell=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        configs.logger.info(f'Created thumb {os.path.getsize(video_path) / 1024:.1f}kb -> {os.path.getsize(out_path) / 1024:.1f}kb')
+    except Exception as e:
+        configs.logger.error(f'Error creating thumbnail from {video_path}\n{str(e)}')
+
+
+def create_thumbnail_from_image(image_path: str, out_path: str, width: int=400, height: int=400, quality: int=25):
+    """width and height form the max box boundary for the resulting image"""
+
+    if not is_image_path(image_path):
+        raise ValueError(image_path)
+
+    command = f"""convert "{image_path}" -resize {width}x{height} -quality {quality} "{out_path}" """
+
+    try:
+        subprocess.run(command, shell=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        configs.logger.info(f'Created thumb {os.path.getsize(image_path) / 1024:.1f}kb -> {os.path.getsize(out_path) / 1024:.1f}kb')
+    except Exception as e:
+        configs.logger.error(f'Error creating thumbnail from {image_path}\n{str(e)}')
+
+
+def is_post_media_file_video(post):
+    return post.get('ext', '').endswith(('webm', 'mp4', 'gif'))
+
+
+def is_post_media_file_image(post):
+    return post.get('ext', '').endswith(('jpg', 'png', 'jpeg'))
+
+
+def create_thumbnail(post: dict, full_path: str, thumb_path: str):
+    if not post_has_file(post):
+        return
+
+    if is_post_media_file_video(post):
+        create_thumbnail_from_video(full_path, thumb_path)
+        return
+    
+    if is_post_media_file_image(post):
+        create_thumbnail_from_image(full_path, thumb_path)
+        return
 
 
 def download_file(url: str, filename: str):
-    ts = [configs.request_cooldown_sec, 4.0, 6.0, 10.0]
+    if is_video_path(filename):
+        ts = [configs.video_cooldown_sec, 4.0, 6.0, 10.0]
+    elif is_image_path(filename):
+        ts = [configs.image_cooldown_sec, 4.0, 6.0, 10.0]
+    else:
+        raise ValueError(filename)
+
     for i, t in enumerate(ts):
         resp = requests.get(url, headers=h)
         if i > 0:
-            configs.request_cooldown_sec += 1.0
-            configs.logger.warning(f'Incrementing 1 sec: {configs.request_cooldown_sec=}')
+            configs.logger.warning(f'Incrementing 1 sec: {configs.video_cooldown_sec=} {configs.image_cooldown_sec=}')
+            configs.video_cooldown_sec += 1.0
+            configs.image_cooldown_sec += 1.0
+            configs.logger.warning(f'Incremented 1 sec: {configs.video_cooldown_sec=} {configs.image_cooldown_sec=}')
 
         sleep(t)
 
@@ -418,6 +481,9 @@ def download_thread_media(board: str, threads: list[dict], media_type: MediaType
                     result = download_file(url, filepath)
                     if result:
                         configs.logger.info(f"[{board}] Downloaded [{media_type.value}] {filepath}")
+                        if media_type == MediaType.full_media and configs.make_thumbnails:
+                            thumb_path = get_filepath(board, MediaType.thumbnail.value, get_fs_filename_thumbnail(post))
+                            create_thumbnail(post, filepath, thumb_path)
 
                 DOWNLOADED_MEDIA.add(board, filepath)
 
@@ -486,15 +552,16 @@ def main():
                 op_threads = get_op_threads(threads)
                 download_thread_media(board, op_threads, MediaType.full_media)
 
-            if configs.boards[board].get('dl_thumbs_op'):
-                op_threads = get_op_threads(threads)
-                download_thread_media(board, op_threads, MediaType.thumbnail)
-
             if configs.boards[board].get('dl_full_media'):
                 download_thread_media(board, threads, MediaType.full_media)
 
-            if configs.boards[board].get('dl_thumbs'):
-                download_thread_media(board, threads, MediaType.thumbnail)
+            if not configs.make_thumbnails:
+                if configs.boards[board].get('dl_thumbs_op'):
+                    op_threads = get_op_threads(threads)
+                    download_thread_media(board, op_threads, MediaType.thumbnail)
+
+                if configs.boards[board].get('dl_thumbs'):
+                    download_thread_media(board, threads, MediaType.thumbnail)
 
             times[board] = round((time.time() - start) / 60, 2) # minutes
             configs.reinitialize = True
@@ -510,9 +577,9 @@ def main():
 
         total_duration = round(sum(times.values()), 1)
         configs.logger.info(f"Total Duration: {total_duration}m")
-        configs.logger.info(f"Going to sleep for {configs.catalog_cooldown_sec}s")
+        configs.logger.info(f"Going to sleep for {configs.loop_cooldown_sec}s")
 
-        time.sleep(configs.catalog_cooldown_sec)
+        time.sleep(configs.loop_cooldown_sec)
 
 
 if __name__=='__main__':
