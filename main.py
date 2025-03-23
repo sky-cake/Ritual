@@ -114,7 +114,7 @@ def create_thumbnail_from_image(image_path: str, out_path: str, width: int=400, 
     command = f"""convert "{image_path}" -resize {width}x{height} -quality {quality} "{out_path}" """
 
     try:
-        subprocess.run(['bash', '-c', command], check=True, stdout=subprocess.DEVNULL)
+        subprocess.run(command, shell=True, check=True, stdout=subprocess.DEVNULL)
         configs.logger.info(f'Created thumb {os.path.getsize(image_path) / 1024:.1f}kb -> {os.path.getsize(out_path) / 1024:.1f}kb')
     except Exception as e:
         configs.logger.error(f'Error creating thumbnail from {image_path}\n{str(e)}')
@@ -260,9 +260,9 @@ def filter_catalog(board: str, catalog: dict, d_last_modified: dict) -> list[int
             if not should_archive(board, subject, comment):
                 continue
 
-            # if not configs.reinitialize and not thread_modified(board, thread, d_last_modified):
-            #     not_modified_thread_count += 1
-            #     continue
+            if not configs.reinitialize and not thread_modified(board, thread, d_last_modified):
+                not_modified_thread_count += 1
+                continue
 
             thread_ids.append(thread.get('no'))
 
@@ -483,6 +483,7 @@ def download_thread_media(board: str, threads: list[dict], media_type: MediaType
                         configs.logger.info(f"[{board}] Downloaded [{media_type.value}] {filepath}")
                         if media_type == MediaType.full_media and configs.make_thumbnails:
                             thumb_path = get_filepath(board, MediaType.thumbnail.value, get_fs_filename_thumbnail(post))
+                            sleep(0.1)
                             create_thumbnail(post, filepath, thumb_path)
 
                 DOWNLOADED_MEDIA.add(board, filepath)
