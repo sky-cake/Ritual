@@ -21,7 +21,7 @@ if configs.site == 'lainchan':
 
 
 class MaxQueue:
-    def __init__(self, boards, max_items_per_board=150*151):
+    def __init__(self, boards, max_items_per_board=150*151*2):
         """
         threads_per_catalog = 150
         images_per_thread = 151
@@ -41,7 +41,7 @@ class MaxQueue:
         while len(board_items) >= self.max_items_per_board:
             board_items.popitem(last=False)
 
-        board_items[filepath] = 0
+        board_items[filepath] = 1
 
     def __contains__(self, filepath: str) -> bool:
         return any(filepath in board_items for board_items in self.items.values())
@@ -479,14 +479,14 @@ def download_thread_media(board: str, threads: list[dict], media_type: MediaType
 
                 if (filepath not in DOWNLOADED_MEDIA[board]) and (not os.path.isfile(filepath)):
                     result = download_file(url, filepath)
+                    DOWNLOADED_MEDIA.add(board, filepath)
                     if result:
                         configs.logger.info(f"[{board}] Downloaded [{media_type.value}] {filepath}")
                         if media_type == MediaType.full_media and configs.make_thumbnails:
                             thumb_path = get_filepath(board, MediaType.thumbnail.value, get_fs_filename_thumbnail(post))
                             sleep(0.1)
                             create_thumbnail(post, filepath, thumb_path)
-
-                DOWNLOADED_MEDIA.add(board, filepath)
+                            DOWNLOADED_MEDIA.add(board, filepath)
 
 
 def create_non_existing_tables():
@@ -565,13 +565,13 @@ def main():
             if configs.boards[board].get('dl_full_media'):
                 download_thread_media(board, threads, MediaType.full_media)
 
-            if not configs.make_thumbnails:
-                if configs.boards[board].get('dl_thumbs_op'):
-                    op_threads = get_op_threads(threads)
-                    download_thread_media(board, op_threads, MediaType.thumbnail)
+            # only dl thumbs if we are not instructed to make them
+            if configs.boards[board].get('dl_thumbs_op') and not (configs.make_thumbnails and configs.boards[board].get('dl_full_media_op') and configs.boards[board].get('dl_full_media')):
+                op_threads = get_op_threads(threads)
+                download_thread_media(board, op_threads, MediaType.thumbnail)
 
-                if configs.boards[board].get('dl_thumbs'):
-                    download_thread_media(board, threads, MediaType.thumbnail)
+            if configs.boards[board].get('dl_thumbs') and not (configs.make_thumbnails and configs.boards[board].get('dl_full_media_op') and configs.boards[board].get('dl_full_media')):
+                download_thread_media(board, threads, MediaType.thumbnail)
 
             times[board] = round((time.time() - start) / 60, 2) # minutes
         configs.reinitialize = True
