@@ -111,10 +111,10 @@ def create_thumbnail_from_image(image_path: str, out_path: str, width: int=400, 
     if not is_image_path(image_path):
         raise ValueError(image_path)
 
-    command = ['convert', image_path, '-resize', '400x400', '-quality', '25', out_path]
+    command = f"""convert "{image_path}" -resize {width}x{height} -quality {quality} "{out_path}" """
 
     try:
-        subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
+        subprocess.run(['bash', '-c', command], check=True, stdout=subprocess.DEVNULL)
         configs.logger.info(f'Created thumb {os.path.getsize(image_path) / 1024:.1f}kb -> {os.path.getsize(out_path) / 1024:.1f}kb')
     except Exception as e:
         configs.logger.error(f'Error creating thumbnail from {image_path}\n{str(e)}')
