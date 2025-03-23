@@ -99,7 +99,7 @@ def create_thumbnail_from_video(video_path: str, out_path: str, width: int=400, 
     command = f"""ffmpeg -hide_banner -loglevel error -ss 0 -i "{video_path}" -pix_fmt yuvj420p -q:v 2 -frames:v 1 -f image2pipe - | convert - -resize {width}x{height} -quality {quality} "{out_path}" """
 
     try:
-        subprocess.run(['bash', '-c', command], check=True, stdout=subprocess.DEVNULL)
+        subprocess.run(command, shell=True, check=True, stdout=subprocess.DEVNULL)
         configs.logger.info(f'Created thumb {os.path.getsize(video_path) / 1024:.1f}kb -> {os.path.getsize(out_path) / 1024:.1f}kb')
     except Exception as e:
         configs.logger.error(f'Error creating thumbnail from {video_path}\n{str(e)}')
