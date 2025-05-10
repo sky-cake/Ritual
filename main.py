@@ -8,7 +8,7 @@ from collections import OrderedDict
 from sqlite3 import Cursor
 import subprocess
 import requests
-import shlex
+import tqdm
 import configs
 from db import get_connection
 from defs import URL4chan, URLlainchan, MediaType, h
@@ -542,7 +542,7 @@ def main():
 
         configs.logger.info(f'Loop Started')
         times = {}
-        for board in configs.boards:
+        for board in tqdm.tqdm(configs.boards, disable=configs.disable_tqdm):
             start = time.time()
 
             catalog = get_catalog(board)

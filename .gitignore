@@ -1,5 +1,5 @@
 configs.py
-media/
+media*
 __pycache__/
 *.log
 *.db

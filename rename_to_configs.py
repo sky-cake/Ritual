@@ -1,5 +1,5 @@
 import os
-
+import tqdm
 from utils import make_path, setup_logger
 
 request_cooldown_sec = 1.2
@@ -22,6 +22,9 @@ logger_name = 'ritual'
 log_file = make_path("ritual.log") # or False if you don't want log files
 MB_5 = 5 * 1024 * 1024
 logger = setup_logger(logger_name, log_file=log_file, stdout=True, file_rotate_size=MB_5, max_files=3)
+
+# logger.info = tqdm.tqdm.write # do this when using stdout logging and tqdm
+disable_tqdm = True
 
 make_thumbnails = True # don't download thumbnails, create them when downloading full media
 
