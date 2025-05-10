@@ -273,7 +273,7 @@ def filter_catalog(board: str, catalog: dict, d_last_modified: dict) -> list[int
 
 
 def get_non_deleted_post_ids_for_thread_num(cursor: Cursor, board: str, thread_id: int) -> list[int]:
-    sql = f"""select num from {board} where thread_num = ? and deleted = 0;"""
+    sql = f"""select num from `{board}` where thread_num = ? and deleted = 0;"""
     parameters = [thread_id]
     cursor.execute(sql, parameters)
     results = cursor.fetchall()
@@ -282,7 +282,7 @@ def get_non_deleted_post_ids_for_thread_num(cursor: Cursor, board: str, thread_i
 
 
 def set_posts_deleted(cursor: Cursor, board: str, post_ids: list[int]) -> list[int]:
-    sql = f"""update {board} set deleted = 1 where num = ?;"""
+    sql = f"""update `{board}` set deleted = 1 where num = ?;"""
     cursor.executemany(sql, [(p,) for p in post_ids])
 
 
@@ -494,7 +494,7 @@ def create_non_existing_tables():
     cursor = conn.cursor()
     for board in configs.boards:
         try:
-            sql = f'SELECT * FROM {board} LIMIT 1;'
+            sql = f'SELECT * FROM `{board}` LIMIT 1;'
             conn.execute(sql)
             configs.logger.info(f'[{board}] Tables already exist.')
         except Exception:

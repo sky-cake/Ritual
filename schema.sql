@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS %%BOARD%% (
+CREATE TABLE IF NOT EXISTS `%%BOARD%%` (
     doc_id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
     media_id INTEGER NOT NULL,
     poster_ip TEXT NOT NULL,
@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS %%BOARD%% (
     UNIQUE (num)
 );
 
-CREATE TABLE IF NOT EXISTS %%BOARD%%_images (
+CREATE TABLE IF NOT EXISTS `%%BOARD%%_images` (
     media_id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
     media_hash TEXT NOT NULL,
     media TEXT,
@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS %%BOARD%%_images (
     UNIQUE (media_hash)
 );
 
-CREATE TABLE IF NOT EXISTS %%BOARD%%_threads (
+CREATE TABLE IF NOT EXISTS `%%BOARD%%_threads` (
     thread_num INTEGER NOT NULL PRIMARY KEY,
     time_op INTEGER NOT NULL,
     time_last INTEGER NOT NULL,
@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS %%BOARD%%_threads (
     UNIQUE (thread_num)
 );
 
-CREATE TABLE IF NOT EXISTS %%BOARD%%_deleted (
+CREATE TABLE IF NOT EXISTS `%%BOARD%%_deleted` (
     doc_id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
     media_id INTEGER NOT NULL,
     poster_ip TEXT NOT NULL,
@@ -96,12 +96,12 @@ CREATE TABLE IF NOT EXISTS %%BOARD%%_deleted (
     UNIQUE (num)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_%%BOARD%%_num ON %%BOARD%% (num);
-CREATE INDEX IF NOT EXISTS idx_%%BOARD%%_media_id ON %%BOARD%% (media_id);
-CREATE INDEX IF NOT EXISTS idx_%%BOARD%%_thread_num ON %%BOARD%% (thread_num);
-CREATE INDEX IF NOT EXISTS idx_%%BOARD%%_timestamp ON %%BOARD%% (timestamp);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_%%BOARD%%_num ON `%%BOARD%%` (num);
+CREATE INDEX IF NOT EXISTS idx_%%BOARD%%_media_id ON `%%BOARD%%` (media_id);
+CREATE INDEX IF NOT EXISTS idx_%%BOARD%%_thread_num ON `%%BOARD%%` (thread_num);
+CREATE INDEX IF NOT EXISTS idx_%%BOARD%%_timestamp ON `%%BOARD%%` (timestamp);
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_%%BOARD%%_num ON %%BOARD%%_images (media_id);
-CREATE INDEX IF NOT EXISTS idx_%%BOARD%%_num ON %%BOARD%%_images (media_hash);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_%%BOARD%%_num ON `%%BOARD%%_images` (media_id);
+CREATE INDEX IF NOT EXISTS idx_%%BOARD%%_num ON `%%BOARD%%_images` (media_hash);
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_%%BOARD%%_num ON %%BOARD%%_threads (thread_num);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_%%BOARD%%_num ON `%%BOARD%%_threads` (thread_num);
