@@ -179,13 +179,21 @@ def get_catalog(board) -> dict:
         return catalog
 
 
-def should_archive(board, subject, comment, whitelist=None, blacklist=None):
+def should_archive(board: str, subject: str, comment: str, whitelist: str =None, blacklist: str=None):
     """
     - If a post is blacklisted and whitelisted, it will not be archived - blacklisted filters take precedence over whitelisted filters.
     - If only a blacklist is specified, skip blacklisted posts, and archive everything else.
     - If only a whitelist is specified, archive whitelisted posts, and skip everything else.
     - If no lists are specified, archive everything.
     """
+    op_comment_min_chars = configs.boards[board].get('op_comment_min_chars')
+    if op_comment_min_chars and len(comment) < op_comment_min_chars:
+        return False
+
+    op_comment_min_chars_unique = configs.boards[board].get('op_comment_min_chars_unique')
+    if op_comment_min_chars_unique and len(set(comment)) < op_comment_min_chars_unique:
+        return False
+
     blacklist_post_filter = configs.boards[board].get('blacklist') if blacklist is None else blacklist
     if blacklist_post_filter:
         if subject:

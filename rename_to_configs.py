@@ -30,6 +30,8 @@ make_thumbnails = True # don't download thumbnails, create them when downloading
 
 # ARCHIVE RULES - What to archive.
 
+# `op_comment_min_chars` and `op_comment_min_chars_unique` filter everything first.
+
 # If a post is blacklisted and whitelisted, it will not be archived - blacklisted filters take precedence over whitelisted filters.
 # If only a blacklist is specified, skip blacklisted posts, and archive everything else.
 # If only a whitelist is specified, archive whitelisted posts, and skip everything else.
@@ -60,7 +62,12 @@ boards = {
         'dl_full_media_op': True, # download all thread text, but only thumbnails and full media for the OP posts on /t/
         'dl_thumbs_op': True,
         'thread_text': True,
-    }
+    },
+    'biz': {
+        'thread_text': True,
+        'op_comment_min_chars': 4, # OP comment must be at least 10 characters long (does not archive: "omg", ".", "lol", etc.)
+        'op_comment_min_chars_unique': 3, # OP comment must have 5 unique character (does not archive: ".", "lol", "hahaha", "aaaaa", etc.)
+    },
 }
 
 
