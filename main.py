@@ -4,7 +4,7 @@ import os
 import random
 import re
 import time
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from sqlite3 import Cursor
 import subprocess
 import requests
@@ -48,9 +48,6 @@ class MaxQueue:
 
     def __getitem__(self, board: str) -> OrderedDict:
         return self.items[board]
-
-
-DOWNLOADED_MEDIA = MaxQueue(configs.boards)
 
 
 def get_headers():
@@ -222,17 +219,17 @@ def should_archive(board: str, subject: str, comment: str, whitelist: str =None,
 def thread_modified(board: str, thread: dict, d_last_modified: dict) -> bool:
     """`True` indicates we should download the thread. Also handles the `d_last_modified` cache."""
     no = thread.get('no')
-    last_modified = thread.get('last_modified')
+    thread_last_modified = thread.get('last_modified')
 
     if board not in d_last_modified:
         d_last_modified[board] = {}
     if no not in d_last_modified[board]:
         d_last_modified[board][no] = {}
 
-    last_modified_d = d_last_modified[board][no].get('last_modified')
+    thread_last_modified_cached = d_last_modified[board][no].get('last_modified')
 
     # Update the thread's last modified time in d_last_modified.
-    d_last_modified[board][no]['last_modified'] = last_modified
+    d_last_modified[board][no]['last_modified'] = thread_last_modified
 
     # Don't let the dict grow over N entries per board.
     N = 200
@@ -244,19 +241,20 @@ def thread_modified(board: str, thread: dict, d_last_modified: dict) -> bool:
             del d_last_modified[board][stale_no]
 
     # last_modified changed
-    if last_modified and last_modified_d and last_modified != last_modified_d:
+    if thread_last_modified and thread_last_modified_cached and thread_last_modified != thread_last_modified_cached:
         return True
 
     # new thread
-    if last_modified_d is None:
+    if thread_last_modified_cached is None:
         return True
 
     return False
 
 
-def filter_catalog(board: str, catalog: dict, d_last_modified: dict) -> list[int]:
+def filter_catalog(board: str, catalog: dict, d_last_modified: dict, is_first_loop: bool) -> list[int]:
     thread_ids = []
     not_modified_thread_count = 0
+    reinitializing = False
     for page in catalog:
         for thread in page['threads']:
 
@@ -268,51 +266,71 @@ def filter_catalog(board: str, catalog: dict, d_last_modified: dict) -> list[int
             if not should_archive(board, subject, comment):
                 continue
 
-            if not configs.reinitialize and not thread_modified(board, thread, d_last_modified):
+            if is_first_loop and configs.reinitialize:
+                reinitializing = True
+                thread_ids.append(thread.get('no'))
+                continue
+
+            if not thread_modified(board, thread, d_last_modified):
                 not_modified_thread_count += 1
                 continue
 
             thread_ids.append(thread.get('no'))
 
-    if not_modified_thread_count > 0:
-        configs.logger.info(f'[{board}] {not_modified_thread_count} threads not modified.')
+    m = f'{not_modified_thread_count} threads not modified'
+    if reinitializing:
+        m = 'Ignoring last modified timestamps on first loop'
+
+    configs.logger.info(f'[{board}] {m}. Queuing {len(thread_ids)} threads.')
 
     return thread_ids
 
 
-def get_non_deleted_post_ids_for_thread_num(cursor: Cursor, board: str, thread_id: int) -> list[int]:
-    sql = f"""select num from `{board}` where thread_num = ? and deleted = 0;"""
-    parameters = [thread_id]
-    cursor.execute(sql, parameters)
+def get_non_deleted_post_ids_for_thread_nums(cursor: Cursor, board: str, thread_ids: list[int]) -> dict[int, list[int]]:
+    if not thread_ids:
+        return {}
+
+    placeholders = ','.join(['?'] * len(thread_ids))
+    sql = f"""select thread_num, num from `{board}` where thread_num in ({placeholders}) and deleted = 0;"""
+    cursor.execute(sql, thread_ids)
     results = cursor.fetchall()
-    post_ids = [r['num'] for r in results]
-    return post_ids
+    d = defaultdict(list)
+    for r in results:
+        d[r['thread_num']].append(r['num'])
+    return d
 
 
-def set_posts_deleted(cursor: Cursor, board: str, post_ids: list[int]) -> list[int]:
-    sql = f"""update `{board}` set deleted = 1 where num = ?;"""
-    cursor.executemany(sql, [(p,) for p in post_ids])
+def set_posts_deleted(cursor: Cursor, board: str, post_ids: list[int]) -> None:
+    if not post_ids:
+        return
+
+    placeholders = ','.join(['?'] * len(post_ids))
+    sql = f"update `{board}` set deleted = 1 where num in ({placeholders});"
+    cursor.execute(sql, post_ids)
 
 
-def get_post_ids_from_thread(thread: dict) -> list[int]:
-    return [t['no'] for t in thread['posts']]
+def get_post_ids_from_thread(thread: dict) -> set[int]:
+    return {t['no'] for t in thread['posts']}
 
 
 def get_threads(cursor: Cursor, board: str, thread_ids: list[int]) -> list[dict]:
     threads = []
     deleted_post_ids = []
+
+    # one query, rather than one per thread
+    thread_num_2_prev_post_nums = get_non_deleted_post_ids_for_thread_nums(cursor, board, thread_ids)
+
     for thread_id in thread_ids:
         thread = fetch_json(URL.thread.value.format(board=board, thread_id=thread_id))
         if thread:
             configs.logger.info(f'[{board}] Found thread [{thread_id}]')
-
-            previous_post_ids = get_non_deleted_post_ids_for_thread_num(cursor, board, thread_id)
-            if previous_post_ids:
-                current_post_ids = get_post_ids_from_thread(thread)
-                for post_id in previous_post_ids:
-                    if post_id not in current_post_ids:
-                        deleted_post_ids.append(post_id)
-                        configs.logger.info(f'[{board}] Post Deleted [{thread_id}] [{post_id}]')
+            
+            current_post_ids = get_post_ids_from_thread(thread)
+            previous_post_ids = thread_num_2_prev_post_nums.get(thread_id, [])
+            for post_id in previous_post_ids:
+                if post_id not in current_post_ids:
+                    deleted_post_ids.append(post_id)
+                    configs.logger.info(f'[{board}] Post Deleted [{thread_id}] [{post_id}]')
 
             threads.append(thread)
         else:
@@ -341,62 +359,57 @@ def post_is_sticky(post: dict) -> bool:
     return post.get('sticky') == 1
 
 
-def upsert_thread(cursor: Cursor, board: str, thread: dict):
-    for i, post in enumerate(thread['posts']):
-        if post_is_sticky(post):
-            continue
+def get_d_board(post: dict, media_id: int = None):
+    return {
+        # 'doc_id': post.get('doc_id'), # autoincremented
+        'media_id': media_id or 0,
+        'poster_ip': post.get('poster_ip', '0'),
+        'num': post.get('no', 0),
+        'subnum': post.get('subnum', 0),
+        'thread_num': post.get('no') if post.get('resto') == 0 else post.get('resto'),
+        'op': 1 if post.get('resto') == 0 else 0,
+        'timestamp': post.get('time', 0),
+        'timestamp_expired': post.get('archived_on', 0),
+        'preview_orig': get_fs_filename_thumbnail(post),
+        'preview_w': post.get('tn_w', 0),
+        'preview_h': post.get('tn_h', 0),
+        'media_filename': html.unescape(f"{post.get('filename')}{post.get('ext')}") if post.get('filename') and post.get('ext') and configs.site == '4chan' else None,
+        'media_w': post.get('w', 0),
+        'media_h': post.get('h', 0),
+        'media_size': post.get('fsize', 0),
+        'media_hash': post.get('md5'),
+        'media_orig': get_fs_filename_full_media(post),
+        'spoiler': post.get('spoiler', 0),
+        'deleted': post.get('filedeleted', 0),
+        'capcode': convert_to_asagi_capcode(post.get('capcode')),
+        'email': post.get('email'),
+        'name': html.unescape(post.get('name')) if post.get('name') and configs.site == '4chan' else None,
+        'trip': post.get('trip'),
+        'title': html.unescape(post.get('sub')) if post.get('sub') and configs.site == '4chan' else None,
+        'comment': convert_to_asagi_comment(post.get('com')) if configs.site == '4chan' else post.get('com'),
+        'delpass': post.get('delpass'),
+        'sticky': post.get('sticky', 0),
+        'locked': post.get('closed', 0),
+        'poster_hash': post.get('id'),
+        'poster_country': post.get('country_name'),
+        'exif': json.dumps({'uniqueIps': int(post.get('unique_ips'))}) if post.get('unique_ips') else None,
+    }
 
-        media_id = None
-        if post_has_file(post):
-            d_image = {
-                # 'media_id': post.get('media_id'), # autoincremented
-                'media_hash': post.get('md5'),
-                'media': get_fs_filename_full_media(post),
-                'preview_op': get_fs_filename_thumbnail(post) if i == 0 else None,
-                'preview_reply': get_fs_filename_thumbnail(post) if i != 0 else None,
-                'total': 0,
-                'banned': 0,
-            }
-            media_id = do_upsert(cursor, f'{board}_images', d_image, 'media_hash', 'media_id')
-            assert media_id
 
-        d_board = {
-            # 'doc_id': post.get('doc_id'), # autoincremented
-            'media_id': media_id or 0,
-            'poster_ip': post.get('poster_ip', '0'),
-            'num': post.get('no', 0),
-            'subnum': post.get('subnum', 0),
-            'thread_num': post.get('no') if post.get('resto') == 0 else post.get('resto'),
-            'op': 1 if post.get('resto') == 0 else 0,
-            'timestamp': post.get('time', 0),
-            'timestamp_expired': post.get('archived_on', 0),
-            'preview_orig': get_fs_filename_thumbnail(post),
-            'preview_w': post.get('tn_w', 0),
-            'preview_h': post.get('tn_h', 0),
-            'media_filename': html.unescape(f"{post.get('filename')}{post.get('ext')}") if post.get('filename') and post.get('ext') and configs.site == '4chan' else None,
-            'media_w': post.get('w', 0),
-            'media_h': post.get('h', 0),
-            'media_size': post.get('fsize', 0),
-            'media_hash': post.get('md5'),
-            'media_orig': get_fs_filename_full_media(post),
-            'spoiler': post.get('spoiler', 0),
-            'deleted': post.get('filedeleted', 0),
-            'capcode': convert_to_asagi_capcode(post.get('capcode')),
-            'email': post.get('email'),
-            'name': html.unescape(post.get('name')) if post.get('name') and configs.site == '4chan' else None,
-            'trip': post.get('trip'),
-            'title': html.unescape(post.get('sub')) if post.get('sub') and configs.site == '4chan' else None,
-            'comment': convert_to_asagi_comment(post.get('com')) if configs.site == '4chan' else post.get('com'),
-            'delpass': post.get('delpass'),
-            'sticky': post.get('sticky', 0),
-            'locked': post.get('closed', 0),
-            'poster_hash': post.get('id'),
-            'poster_country': post.get('country_name'),
-            'exif': json.dumps({'uniqueIps': int(post.get('unique_ips'))}) if post.get('unique_ips') else None,
-        }
-        do_upsert(cursor, board, d_board, 'num', 'num')
+def get_d_image(post: dict, i: int):
+    return {
+        # 'media_id': post.get('media_id'), # autoincremented
+        'media_hash': post.get('md5'),
+        'media': get_fs_filename_full_media(post),
+        'preview_op': get_fs_filename_thumbnail(post) if i == 0 else None,
+        'preview_reply': get_fs_filename_thumbnail(post) if i != 0 else None,
+        'total': 0,
+        'banned': 0,
+    }
 
-    d_thread = {
+
+def get_d_thread(thread: dict):
+    return {
         'thread_num': thread['posts'][0]['no'],
         'time_op': thread['posts'][0]['time'],
         'time_last': thread['posts'][-1]['time'],
@@ -409,7 +422,6 @@ def upsert_thread(cursor: Cursor, board: str, thread: dict):
         'sticky': 0,
         'locked': 0,
     }
-    do_upsert(cursor, f'{board}_threads', d_thread, 'thread_num', 'thread_num')
 
 
 def do_upsert(cursor: Cursor, table: str, d: dict, conflict_col: str, returning: str):
@@ -428,6 +440,24 @@ def do_upsert(cursor: Cursor, table: str, d: dict, conflict_col: str, returning:
 def upsert_threads(cursor, board: str, threads: list[dict]):
     for thread in threads:
         upsert_thread(cursor, board, thread)
+
+
+def upsert_thread(cursor: Cursor, board: str, thread: dict):
+    for i, post in enumerate(thread['posts']):
+        if post_is_sticky(post):
+            continue
+
+        media_id = None
+        if post_has_file(post):
+            d_image = get_d_image(post, i)
+            media_id = do_upsert(cursor, f'{board}_images', d_image, 'media_hash', 'media_id')
+            assert media_id
+
+        d_board = get_d_board(post, media_id)
+        do_upsert(cursor, board, d_board, 'num', 'num')
+
+    d_thread = get_d_thread(thread)
+    do_upsert(cursor, f'{board}_threads', d_thread, 'thread_num', 'thread_num')
 
 
 def get_filepath(board: str, media_type, filename: str) -> str:
@@ -485,16 +515,15 @@ def download_thread_media(board: str, threads: list[dict], media_type: MediaType
                 else:
                     raise ValueError(media_type)
 
-                if (filepath not in DOWNLOADED_MEDIA[board]) and (not os.path.isfile(filepath)):
+                # os.path.isfile is cheap, no need for a cache
+                if not os.path.isfile(filepath):
                     result = download_file(url, filepath)
-                    DOWNLOADED_MEDIA.add(board, filepath)
                     if result:
                         configs.logger.info(f"[{board}] Downloaded [{media_type.value}] {filepath}")
                         if media_type == MediaType.full_media and configs.make_thumbnails:
                             thumb_path = get_filepath(board, MediaType.thumbnail.value, get_fs_filename_thumbnail(post))
                             sleep(0.1)
                             create_thumbnail(post, filepath, thumb_path)
-                            DOWNLOADED_MEDIA.add(board, filepath)
 
 
 def create_non_existing_tables():
@@ -544,6 +573,8 @@ def main():
 
     d_last_modified = dict() # {g: {123: 1717755968, 124: 1717755999}}
 
+    is_first_loop = True
+
     while True:
         conn = get_connection()
         cursor = conn.cursor()
@@ -558,7 +589,7 @@ def main():
                 configs.logger.info(f"Catalog returned {catalog}")
                 continue
 
-            thread_ids = filter_catalog(board, catalog, d_last_modified)
+            thread_ids = filter_catalog(board, catalog, d_last_modified, is_first_loop)
 
             threads = get_threads(cursor, board, thread_ids)
 
@@ -582,7 +613,8 @@ def main():
                 download_thread_media(board, threads, MediaType.thumbnail)
 
             times[board] = round((time.time() - start) / 60, 2) # minutes
-        configs.reinitialize = True
+
+        is_first_loop = False
 
         cursor.close()
         conn.close()
