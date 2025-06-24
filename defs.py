@@ -18,14 +18,3 @@ class URLlainchan(Enum):
     thumbnail = None
     catalog = "https://lainchan.org/{board}/catalog.json"
     thread = "https://lainchan.org/{board}/res/{thread_id}.json"
-
-
-h = {
-    "headers": [
-        # {"name": "Accept-Encoding", "value": "gzip, deflate, br, zstd"},
-        # {"name": "Accept-Language", "value": "en-US,en;q=0.5"},
-        # {"name": "Connection", "value": "keep-alive"},
-    ]
-}
-
-h = {x["name"]: x["value"] for x in h["headers"]}

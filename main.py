@@ -11,7 +11,7 @@ import requests
 import tqdm
 import configs
 from db import get_connection
-from defs import URL4chan, URLlainchan, MediaType, h
+from defs import URL4chan, URLlainchan, MediaType
 from utils import convert_to_asagi_capcode, convert_to_asagi_comment, make_path
 
 
@@ -51,10 +51,10 @@ class MaxQueue:
 
 
 def get_headers():
-    headers = None
+    h = None
     if configs.user_agent:
-        headers = {'User-Agent', configs.user_agent}
-    return headers
+        h = {'User-Agent', configs.user_agent}
+    return h
 
 
 def get_cookies():
@@ -70,7 +70,7 @@ def sleep(t: int):
 
 def fetch_json(url) -> dict:
     try:
-        resp = requests.get(url, headers=h)
+        resp = requests.get(url, headers=get_headers())
         sleep(configs.request_cooldown_sec)
 
         if resp.status_code == 200:
@@ -147,7 +147,7 @@ def download_file(url: str, filename: str):
         raise ValueError(filename)
 
     for i, t in enumerate(ts):
-        resp = requests.get(url, headers=h)
+        resp = requests.get(url, headers=get_headers())
         if i > 0:
             configs.logger.warning(f'Incrementing 1 sec: {configs.video_cooldown_sec=} {configs.image_cooldown_sec=}')
             configs.video_cooldown_sec += 1.0
