@@ -9,6 +9,7 @@ def dict_factory(cursor, row):
         d[col[0]] = row[i]
     return d
 
+
 def get_connection():
     print('Creating database connection, started.')
     assert isinstance(configs.database, str)

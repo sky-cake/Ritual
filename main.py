@@ -1,141 +1,36 @@
 import html
-import json
 import os
-import random
 import re
 import time
-from collections import OrderedDict, defaultdict
+from collections import defaultdict
 from sqlite3 import Cursor
-import subprocess
+
 import requests
 import tqdm
+
 import configs
+from asagi import (
+    create_thumbnail,
+    get_filepath,
+    get_fs_filename_full_media,
+    get_fs_filename_thumbnail,
+    post_has_file,
+    post_is_sticky,
+    get_op_threads,
+    get_d_board, 
+    get_d_image,
+    get_d_thread
+)
 from db import get_connection
-from defs import URL4chan, URLlainchan, MediaType
-from utils import convert_to_asagi_capcode, convert_to_asagi_comment, make_path
-
-
-URL = URL4chan
-if configs.site == 'lainchan':
-    URL = URLlainchan
-
-
-class MaxQueue:
-    def __init__(self, boards, max_items_per_board=150*151*2):
-        """
-        threads_per_catalog = 150
-        images_per_thread = 151
-        """
-
-        # use OrderedDict for lookup speed, rather than a list
-        self.items = {b: OrderedDict() for b in boards}
-
-        self.max_items_per_board = max_items_per_board
-
-    def add(self, board: str, filepath: str):
-        board_items = self.items[board]
-
-        if filepath in board_items:
-            return
-
-        while len(board_items) >= self.max_items_per_board:
-            board_items.popitem(last=False)
-
-        board_items[filepath] = 1
-
-    def __contains__(self, filepath: str) -> bool:
-        return any(filepath in board_items for board_items in self.items.values())
-
-    def __getitem__(self, board: str) -> OrderedDict:
-        return self.items[board]
-
-
-def get_headers():
-    h = None
-    if configs.user_agent:
-        h = {'User-Agent', configs.user_agent}
-    return h
-
-
-def get_cookies():
-    return {}
-
-
-def sleep(t: int):
-    if configs.add_random:
-        t += random.uniform(0.0, 1.0)
-
-    time.sleep(t)
-
-
-def fetch_json(url) -> dict:
-    try:
-        resp = requests.get(url, headers=get_headers())
-        sleep(configs.request_cooldown_sec)
-
-        if resp.status_code == 200:
-            return resp.json()
-    except Exception:
-        sleep(7.5)
-
-
-def is_video_path(path: str) -> bool:
-    return path.endswith(('webm', 'mp4', 'gif'))
-
-
-def is_image_path(path: str) -> bool:
-    return path.endswith(('jpg', 'jpeg', 'png'))
-
-
-def create_thumbnail_from_video(video_path: str, out_path: str, width: int=400, height: int=400, quality: int=25):
-    """width and height form the max box boundary for the resulting image"""
-
-    if not is_video_path(video_path):
-        raise ValueError(video_path)
-
-    command = f"""ffmpeg -hide_banner -loglevel error -ss 0 -i "{video_path}" -pix_fmt yuvj420p -q:v 2 -frames:v 1 -f image2pipe - | convert - -resize {width}x{height} -quality {quality} "{out_path}" """
-
-    try:
-        subprocess.run(command, shell=True, check=True, stdout=subprocess.DEVNULL)
-        configs.logger.info(f'Created thumb {os.path.getsize(video_path) / 1024:.1f}kb -> {os.path.getsize(out_path) / 1024:.1f}kb')
-    except Exception as e:
-        configs.logger.error(f'Error creating thumbnail from {video_path}\n{str(e)}')
-
-
-def create_thumbnail_from_image(image_path: str, out_path: str, width: int=400, height: int=400, quality: int=25):
-    """width and height form the max box boundary for the resulting image"""
-
-    if not is_image_path(image_path):
-        raise ValueError(image_path)
-
-    command = f"""convert "{image_path}" -resize {width}x{height} -quality {quality} "{out_path}" """
-
-    try:
-        subprocess.run(command, shell=True, check=True, stdout=subprocess.DEVNULL)
-        configs.logger.info(f'Created thumb {os.path.getsize(image_path) / 1024:.1f}kb -> {os.path.getsize(out_path) / 1024:.1f}kb')
-    except Exception as e:
-        configs.logger.error(f'Error creating thumbnail from {image_path}\n{str(e)}')
-
-
-def is_post_media_file_video(post):
-    return post.get('ext', '').endswith(('webm', 'mp4', 'gif'))
-
-
-def is_post_media_file_image(post):
-    return post.get('ext', '').endswith(('jpg', 'png', 'jpeg'))
-
-
-def create_thumbnail(post: dict, full_path: str, thumb_path: str):
-    if not post_has_file(post):
-        return
-
-    if is_post_media_file_video(post):
-        create_thumbnail_from_video(full_path, thumb_path)
-        return
-    
-    if is_post_media_file_image(post):
-        create_thumbnail_from_image(full_path, thumb_path)
-        return
+from enums import MediaType
+from utils import (
+    fetch_json,
+    is_image_path,
+    is_video_path,
+    make_path,
+    sleep,
+    test_deps
+)
 
 
 def download_file(url: str, filename: str):
@@ -147,14 +42,14 @@ def download_file(url: str, filename: str):
         raise ValueError(filename)
 
     for i, t in enumerate(ts):
-        resp = requests.get(url, headers=get_headers())
+        resp = requests.get(url, headers=configs.headers)
         if i > 0:
             configs.logger.warning(f'Incrementing 1 sec: {configs.video_cooldown_sec=} {configs.image_cooldown_sec=}')
             configs.video_cooldown_sec += 1.0
             configs.image_cooldown_sec += 1.0
             configs.logger.warning(f'Incremented 1 sec: {configs.video_cooldown_sec=} {configs.image_cooldown_sec=}')
 
-        sleep(t)
+        sleep(t, add_random=configs.add_random)
 
         if resp.status_code != 200:
             configs.logger.warning(f'{url=} {resp.status_code=}')
@@ -170,7 +65,12 @@ def download_file(url: str, filename: str):
 
 
 def get_catalog(board) -> dict:
-    catalog = fetch_json(URL.catalog.value.format(board=board))
+    catalog = fetch_json(
+        configs.url_catalog.format(board=board),
+        headers=configs.headers,
+        request_cooldown_sec=configs.request_cooldown_sec,
+        add_random=configs.add_random
+    )
     configs.logger.info(f'[{board}] Downloaded catalog')
     if catalog:
         return catalog
@@ -269,6 +169,7 @@ def filter_catalog(board: str, catalog: dict, d_last_modified: dict, is_first_lo
             if is_first_loop and configs.reinitialize:
                 reinitializing = True
                 thread_ids.append(thread.get('no'))
+                thread_modified(board, thread, d_last_modified) # populate `d_last_modified`
                 continue
 
             if not thread_modified(board, thread, d_last_modified):
@@ -321,7 +222,12 @@ def get_threads(cursor: Cursor, board: str, thread_ids: list[int]) -> list[dict]
     thread_num_2_prev_post_nums = get_non_deleted_post_ids_for_thread_nums(cursor, board, thread_ids)
 
     for thread_id in thread_ids:
-        thread = fetch_json(URL.thread.value.format(board=board, thread_id=thread_id))
+        thread = fetch_json(
+            configs.url_thread.format(board=board, thread_id=thread_id),
+            headers=configs.headers,
+            request_cooldown_sec=configs.request_cooldown_sec,
+            add_random=configs.add_random
+        )
         if thread:
             configs.logger.info(f'[{board}] Found thread [{thread_id}]')
             
@@ -341,95 +247,12 @@ def get_threads(cursor: Cursor, board: str, thread_ids: list[int]) -> list[dict]
     return threads
 
 
-def post_has_file(post: dict) -> bool:
-    return post.get('tim') and post.get('ext') and post.get('md5')
-
-
-def get_fs_filename_full_media(post: dict) -> str:
-    if post_has_file(post):
-        return f"{post.get('tim')}{post.get('ext')}"
-
-
-def get_fs_filename_thumbnail(post: dict) -> str:
-    if post_has_file(post):
-        return f"{post.get('tim')}s.jpg"
-
-
-def post_is_sticky(post: dict) -> bool:
-    return post.get('sticky') == 1
-
-
-def get_d_board(post: dict, media_id: int = None):
-    return {
-        # 'doc_id': post.get('doc_id'), # autoincremented
-        'media_id': media_id or 0,
-        'poster_ip': post.get('poster_ip', '0'),
-        'num': post.get('no', 0),
-        'subnum': post.get('subnum', 0),
-        'thread_num': post.get('no') if post.get('resto') == 0 else post.get('resto'),
-        'op': 1 if post.get('resto') == 0 else 0,
-        'timestamp': post.get('time', 0),
-        'timestamp_expired': post.get('archived_on', 0),
-        'preview_orig': get_fs_filename_thumbnail(post),
-        'preview_w': post.get('tn_w', 0),
-        'preview_h': post.get('tn_h', 0),
-        'media_filename': html.unescape(f"{post.get('filename')}{post.get('ext')}") if post.get('filename') and post.get('ext') and configs.site == '4chan' else None,
-        'media_w': post.get('w', 0),
-        'media_h': post.get('h', 0),
-        'media_size': post.get('fsize', 0),
-        'media_hash': post.get('md5'),
-        'media_orig': get_fs_filename_full_media(post),
-        'spoiler': post.get('spoiler', 0),
-        'deleted': post.get('filedeleted', 0),
-        'capcode': convert_to_asagi_capcode(post.get('capcode')),
-        'email': post.get('email'),
-        'name': html.unescape(post.get('name')) if post.get('name') and configs.site == '4chan' else None,
-        'trip': post.get('trip'),
-        'title': html.unescape(post.get('sub')) if post.get('sub') and configs.site == '4chan' else None,
-        'comment': convert_to_asagi_comment(post.get('com')) if configs.site == '4chan' else post.get('com'),
-        'delpass': post.get('delpass'),
-        'sticky': post.get('sticky', 0),
-        'locked': post.get('closed', 0),
-        'poster_hash': post.get('id'),
-        'poster_country': post.get('country_name'),
-        'exif': json.dumps({'uniqueIps': int(post.get('unique_ips'))}) if post.get('unique_ips') else None,
-    }
-
-
-def get_d_image(post: dict, i: int):
-    return {
-        # 'media_id': post.get('media_id'), # autoincremented
-        'media_hash': post.get('md5'),
-        'media': get_fs_filename_full_media(post),
-        'preview_op': get_fs_filename_thumbnail(post) if i == 0 else None,
-        'preview_reply': get_fs_filename_thumbnail(post) if i != 0 else None,
-        'total': 0,
-        'banned': 0,
-    }
-
-
-def get_d_thread(thread: dict):
-    return {
-        'thread_num': thread['posts'][0]['no'],
-        'time_op': thread['posts'][0]['time'],
-        'time_last': thread['posts'][-1]['time'],
-        'time_bump': thread['posts'][-1]['time'],
-        'time_ghost': None,
-        'time_ghost_bump': None,
-        'time_last_modified': 0,
-        'nreplies': len(thread['posts']) - 1,
-        'nimages': len([None for post in thread['posts'] if post_has_file(post)]),
-        'sticky': 0,
-        'locked': 0,
-    }
-
-
 def do_upsert(cursor: Cursor, table: str, d: dict, conflict_col: str, returning: str):
     sql_cols = ', '.join(d)
     sql_placeholders = ', '.join(['?'] * len(d))
     sql_conflict = ', '.join([f'{col}=?' for col in d])
 
-    sql = f"""INSERT INTO `{table}` ({sql_cols}) VALUES ({sql_placeholders}) ON CONFLICT({conflict_col}) DO UPDATE SET {sql_conflict} RETURNING {returning};"""
+    sql = f"""insert into `{table}` ({sql_cols}) values ({sql_placeholders}) on conflict({conflict_col}) do update set {sql_conflict} returning {returning};"""
     values = list(d.values())
     parameters = values + values
     cursor.execute(sql, parameters)
@@ -437,36 +260,49 @@ def do_upsert(cursor: Cursor, table: str, d: dict, conflict_col: str, returning:
     return result[returning]
 
 
+def do_upsert_many(cursor: Cursor, table: str, rows: list[dict], conflict_col: str, batch_size: int = 155):
+    if not rows:
+        return
+
+    keys = list(rows[0])
+    placeholder = '(' + ', '.join(['?'] * len(keys)) + ')'
+    sql_cols = ', '.join(keys)
+    sql_conflict = ', '.join([f'{k}=excluded.{k}' for k in keys])
+
+    for i in range(0, len(rows), batch_size):
+        chunk = rows[i:i + batch_size]
+        placeholders = ', '.join([placeholder] * len(chunk))
+        sql = f"""insert into `{table}` ({sql_cols}) values {placeholders} on conflict({conflict_col}) do update set {sql_conflict};"""
+        flat_values = [v for row in chunk for v in row.values()]
+        cursor.execute(sql, flat_values)
+
+
 def upsert_threads(cursor, board: str, threads: list[dict]):
+    post_rows = []
+    thread_rows = []
+
     for thread in threads:
-        upsert_thread(cursor, board, thread)
+        d_thread = get_d_thread(thread)
+        thread_rows.append(d_thread)
 
+        is_op = True
+        for post in thread['posts']:
+            if post_is_sticky(post):
+                is_op = False
+                continue
 
-def upsert_thread(cursor: Cursor, board: str, thread: dict):
-    for i, post in enumerate(thread['posts']):
-        if post_is_sticky(post):
-            continue
+            media_id = None
+            if post_has_file(post):
+                d_image = get_d_image(post, is_op)
+                media_id = do_upsert(cursor, f'{board}_images', d_image, 'media_hash', 'media_id')
+                assert media_id
 
-        media_id = None
-        if post_has_file(post):
-            d_image = get_d_image(post, i)
-            media_id = do_upsert(cursor, f'{board}_images', d_image, 'media_hash', 'media_id')
-            assert media_id
+            d_board = get_d_board(post, media_id, unescape_data_b4_db_write=configs.unescape_data_b4_db_write)
+            post_rows.append(d_board)
+            is_op = False
 
-        d_board = get_d_board(post, media_id)
-        do_upsert(cursor, board, d_board, 'num', 'num')
-
-    d_thread = get_d_thread(thread)
-    do_upsert(cursor, f'{board}_threads', d_thread, 'thread_num', 'thread_num')
-
-
-def get_filepath(board: str, media_type, filename: str) -> str:
-    tim = filename.split('.')[0]
-    assert len(tim) >= 6 and tim[:6].isdigit()
-    dir_path = make_path(configs.media_save_path, board, media_type, filename[:4], filename[4:6])
-    os.makedirs(dir_path, mode=775, exist_ok=True)
-    os.chmod(dir_path, 0o775)
-    return os.path.join(dir_path, filename)
+    do_upsert_many(cursor, board, post_rows, 'num')
+    do_upsert_many(cursor, f'{board}_threads', thread_rows, 'thread_num')
 
 
 def match_sub_and_com(post_op: dict, pattern: str):
@@ -496,21 +332,21 @@ def download_thread_media(board: str, threads: list[dict], media_type: MediaType
                     if isinstance(board_thumb_pattern, str) and not match_sub_and_com(thread['posts'][0], board_thumb_pattern):
                         continue
 
-                    if URL.thumbnail.value is None:
+                    if configs.url_thumbnail is None:
                         configs.logger.info('Warning: this site does not support thumbnail downloads.')
 
-                    url = URL.thumbnail.value.format(board=board, image_id=tim)
+                    url = configs.url_thumbnail.format(board=board, image_id=tim)
                     filename = get_fs_filename_thumbnail(post)
-                    filepath = get_filepath(board, MediaType.thumbnail.value, filename)
+                    filepath = get_filepath(configs.media_save_path, board, MediaType.thumbnail.value, filename)
 
                 elif media_type == MediaType.full_media:
                     board_full_media_pattern = configs.boards[board].get('dl_full_media')
                     if isinstance(board_full_media_pattern, str) and not match_sub_and_com(thread['posts'][0], board_full_media_pattern):
                         continue
 
-                    url = URL.full_media.value.format(board=board, image_id=tim, ext=ext)
+                    url = configs.url_full_media.format(board=board, image_id=tim, ext=ext)
                     filename = get_fs_filename_full_media(post)
-                    filepath = get_filepath(board, MediaType.full_media.value, filename)
+                    filepath = get_filepath(configs.media_save_path, board, MediaType.full_media.value, filename)
 
                 else:
                     raise ValueError(media_type)
@@ -521,9 +357,9 @@ def download_thread_media(board: str, threads: list[dict], media_type: MediaType
                     if result:
                         configs.logger.info(f"[{board}] Downloaded [{media_type.value}] {filepath}")
                         if media_type == MediaType.full_media and configs.make_thumbnails:
-                            thumb_path = get_filepath(board, MediaType.thumbnail.value, get_fs_filename_thumbnail(post))
-                            sleep(0.1)
-                            create_thumbnail(post, filepath, thumb_path)
+                            thumb_path = get_filepath(configs.media_save_path, board, MediaType.thumbnail.value, get_fs_filename_thumbnail(post))
+                            sleep(0.1, add_random=configs.add_random)
+                            create_thumbnail(post, filepath, thumb_path, logger=configs.logger)
 
 
 def create_non_existing_tables():
@@ -544,26 +380,6 @@ def create_non_existing_tables():
             conn.commit()
     cursor.close()
     conn.close()
-
-
-def get_op_threads(threads):
-    if not threads:
-        return []
-
-    op_threads = []
-    for thread in threads:
-        for post in thread['posts']:
-            if post['resto'] == 0:
-                op_threads.append({'posts': [post]})
-
-    return op_threads
-
-
-def test_deps():
-    ffmpeg_path = subprocess.run(['which', 'ffmpeg'], capture_output=True, text=True).stdout.strip()
-    convert_path = subprocess.run(['which', 'convert'], capture_output=True, text=True).stdout.strip()
-    print(f'FFmpeg Path: {ffmpeg_path}')
-    print(f'Convert Path: {convert_path}')
 
 
 def main():

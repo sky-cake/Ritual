@@ -1,5 +1,7 @@
 import os
+
 import tqdm
+
 from utils import make_path, setup_logger
 
 request_cooldown_sec = 1.2
@@ -14,9 +16,27 @@ media_save_path = make_path('media')
 database = make_path('ritual.db') # sqlite
 
 
-user_agent = ''
+headers = None
+# headers = {'User-Agent', ''}
 
-site = '4chan' # '4chan' 'lainchan' # use two separate instances of Ritual to archive both sites
+
+# 4chan API data should html unescaped before writes i.e. unescape_data_b4_db_write = True
+# The goal here is to persist data that is not html escaped
+unescape_data_b4_db_write = True
+
+
+## 4chan
+url_catalog = "https://a.4cdn.org/{board}/catalog.json"
+url_thread = "https://a.4cdn.org/{board}/thread/{thread_id}.json"
+url_full_media = "https://i.4cdn.org/{board}/{image_id}{ext}" # str or None
+url_thumbnail = "https://i.4cdn.org/{board}/{image_id}s.jpg" # str or None
+
+## lainchan
+# url_full_media = "https://lainchan.org/{board}/src/{image_id}{ext}"
+# url_thumbnail = None
+# url_catalog = "https://lainchan.org/{board}/catalog.json"
+# url_thread = "https://lainchan.org/{board}/res/{thread_id}.json"
+
 
 logger_name = 'ritual'
 log_file = make_path("ritual.log") # or False if you don't want log files

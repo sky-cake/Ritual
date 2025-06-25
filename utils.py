@@ -1,13 +1,25 @@
-import html
 import json
 import logging
 import os
-import re
+import random
+import subprocess
+import time
+from collections import OrderedDict
 from logging.handlers import RotatingFileHandler
+
+import requests
+
+
+def test_deps():
+    ffmpeg_path = subprocess.run(['which', 'ffmpeg'], capture_output=True, text=True).stdout.strip()
+    convert_path = subprocess.run(['which', 'convert'], capture_output=True, text=True).stdout.strip()
+    print(f'FFmpeg Path: {ffmpeg_path}')
+    print(f'Convert Path: {convert_path}')
 
 
 def make_path(*filepaths):
     return os.path.join(os.path.abspath(os.path.dirname(__file__)), *filepaths)
+
 
 def setup_logger(logger_name, log_file=False, stdout=True, file_rotate_size=1 * 1024 * 1024, max_files=3, log_level=logging.INFO):
     logger = logging.getLogger(logger_name)
@@ -38,93 +50,92 @@ def read_json(name):
         return json.load(f)
 
 
-def convert_to_asagi_capcode(a):
-    if a:
-        if a == "mod": return "M"
-        if a == "admin": return "A"
-        if a == "admin_highlight": return "A"
-        if a == "developer": return "D"
-        if a == "verified": return "V"
-        if a == "founder": return "F"
-        if a == "manager": return "G"
+def sleep(t: int, add_random: bool=False):
+    if add_random:
+        t += random.uniform(0.0, 1.0)
 
-        return "M"
-
-    return "N"
+    time.sleep(t)
 
 
-def convert_to_asagi_comment(a):
-    if not a:
-        return a
+def fetch_json(url, headers=None, request_cooldown_sec: float=None, add_random: bool=False) -> dict:
+    try:
+        resp = requests.get(url, headers=headers)
+        if request_cooldown_sec:
+            sleep(request_cooldown_sec, add_random=add_random)
 
-    # literal tags
-    if "[" in a:
-        a = re.sub(
-            "\\[(/?(spoiler|code|math|eqn|sub|sup|b|i|o|s|u|banned|info|fortune|shiftjis|sjis|qstcolor))\\]",
-            "[\\1:lit]",
-            a
-        )
-    
-    # abbr, exif, oekaki
-    if "\"abbr" in a: a = re.sub("((<br>){0-2})?<span class=\"abbr\">(.*?)</span>", "", a)
-    if "\"exif" in a: a = re.sub("((<br>)+)?<table class=\"exif\"(.*?)</table>", "", a)
-    if ">Oek" in a: a = re.sub("((<br>)+)?<small><b>Oekaki(.*?)</small>", "", a)
-    
-    # banned
-    if "<stro" in a:
-        a = re.sub("<strong style=\"color: ?red;?\">(.*?)</strong>", "[banned]\\1[/banned]", a)
-    
-    # fortune
-    if "\"fortu" in a:
-        a = re.sub(
-            "<span class=\"fortune\" style=\"color:(.+?)\"><br><br><b>(.*?)</b></span>",
-            "\n\n[fortune color=\"\\1\"]\\2[/fortune]",
-            a
-        )
-    
-    # dice roll
-    if "<b>" in a:
-        a = re.sub(
-            "<b>(Roll(.*?))</b>",
-            "[b]\\1[/b]",
-            a
-        )
-    
-    # code tags
-    if "<pre" in a:
-        a = re.sub("<pre[^>]*>", "[code]", a)
-        a = a.replace("</pre>", "[/code]")
-    
-    # math tags
-    if "\"math" in a:
-        a = re.sub("<span class=\"math\">(.*?)</span>", "[math]\\1[/math]", a)
-        a = re.sub("<div class=\"math\">(.*?)</div>", "[eqn]\\1[/eqn]", a)
-    
-    # sjis tags
-    if "\"sjis" in a:
-        a = re.sub("<span class=\"sjis\">(.*?)</span>", "[shiftjis]\\1[/shiftjis]", a) # use [sjis] maybe?
-    
-    # quotes & deadlinks
-    if "<span" in a:
-        a = re.sub("<span class=\"quote\">(.*?)</span>", "\\1", a)
-        
-        # hacky fix for deadlinks inside quotes
-        for idx in range(3):
-            if not "deadli" in a: break
-            a = re.sub("<span class=\"(?:[^\"]*)?deadlink\">(.*?)</span>", "\\1", a)
-    
-    # other links
-    if "<a" in a:
-        a = re.sub("<a(?:[^>]*)>(.*?)</a>", "\\1", a)
-    
-    # spoilers
-    a = a.replace("<s>", "[spoiler]")
-    a = a.replace("</s>", "[/spoiler]")
-    
-    # newlines
-    a = a.replace("<br>", "\n")
-    a = a.replace("<wbr>", "")
-    
-    a = html.unescape(a)
-    
-    return a
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception:
+        sleep(7.5)
+
+
+def is_video_path(path: str) -> bool:
+    return path.endswith(('webm', 'mp4', 'gif'))
+
+
+def is_image_path(path: str) -> bool:
+    return path.endswith(('jpg', 'jpeg', 'png'))
+
+
+class MaxQueue:
+    def __init__(self, boards, max_items_per_board=150*151*2):
+        """
+        threads_per_catalog = 150
+        images_per_thread = 151
+        """
+
+        # use OrderedDict for lookup speed, rather than a list
+        self.items = {b: OrderedDict() for b in boards}
+
+        self.max_items_per_board = max_items_per_board
+
+    def add(self, board: str, filepath: str):
+        board_items = self.items[board]
+
+        if filepath in board_items:
+            return
+
+        while len(board_items) >= self.max_items_per_board:
+            board_items.popitem(last=False)
+
+        board_items[filepath] = 1
+
+    def __contains__(self, filepath: str) -> bool:
+        return any(filepath in board_items for board_items in self.items.values())
+
+    def __getitem__(self, board: str) -> OrderedDict:
+        return self.items[board]
+
+
+def create_thumbnail_from_video(video_path: str, out_path: str, width: int=400, height: int=400, quality: int=25, logger=None):
+    """width and height form the max box boundary for the resulting image"""
+
+    if not is_video_path(video_path):
+        raise ValueError(video_path)
+
+    command = f"""ffmpeg -hide_banner -loglevel error -ss 0 -i "{video_path}" -pix_fmt yuvj420p -q:v 2 -frames:v 1 -f image2pipe - | convert - -resize {width}x{height} -quality {quality} "{out_path}" """
+
+    try:
+        subprocess.run(command, shell=True, check=True, stdout=subprocess.DEVNULL)
+        if logger:
+            logger.info(f'Created thumb {os.path.getsize(video_path) / 1024:.1f}kb -> {os.path.getsize(out_path) / 1024:.1f}kb')
+    except Exception as e:
+        if logger:
+            logger.error(f'Error creating thumbnail from {video_path}\n{str(e)}')
+
+
+def create_thumbnail_from_image(image_path: str, out_path: str, width: int=400, height: int=400, quality: int=25, logger=None):
+    """width and height form the max box boundary for the resulting image"""
+
+    if not is_image_path(image_path):
+        raise ValueError(image_path)
+
+    command = f"""convert "{image_path}" -resize {width}x{height} -quality {quality} "{out_path}" """
+
+    try:
+        subprocess.run(command, shell=True, check=True, stdout=subprocess.DEVNULL)
+        if logger:
+            logger.info(f'Created thumb {os.path.getsize(image_path) / 1024:.1f}kb -> {os.path.getsize(out_path) / 1024:.1f}kb')
+    except Exception as e:
+        if logger:
+            logger.error(f'Error creating thumbnail from {image_path}\n{str(e)}')

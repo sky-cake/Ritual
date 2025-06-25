@@ -1,6 +1,7 @@
 import unittest
 
-from main import MaxQueue, thread_modified
+from main import thread_modified
+from utils import MaxQueue
 
 
 class TestThreadModified(unittest.TestCase):
