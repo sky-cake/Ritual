@@ -16,10 +16,9 @@ from asagi import (
     get_fs_filename_thumbnail,
     post_has_file,
     post_is_sticky,
-    get_op_threads,
     get_d_board, 
     get_d_image,
-    get_d_thread
+    get_thread_id_2_last_replies
 )
 from db import get_connection
 from enums import MediaType
@@ -64,7 +63,7 @@ def download_file(url: str, filename: str):
     configs.logger.warning(f'Max retries exceeded {url=} {filename=}')
 
 
-def get_catalog(board) -> dict:
+def get_catalog_from_api(board) -> dict:
     catalog = fetch_json(
         configs.url_catalog.format(board=board),
         headers=configs.headers,
@@ -151,8 +150,8 @@ def thread_modified(board: str, thread: dict, d_last_modified: dict) -> bool:
     return False
 
 
-def filter_catalog(board: str, catalog: dict, d_last_modified: dict, is_first_loop: bool) -> list[int]:
-    thread_ids = []
+def filter_catalog(board: str, catalog: dict, d_last_modified: dict, is_first_loop: bool) -> dict[int, dict]:
+    thread_id_2_thread = dict()
     not_modified_thread_count = 0
     reinitializing = False
     for page in catalog:
@@ -168,7 +167,7 @@ def filter_catalog(board: str, catalog: dict, d_last_modified: dict, is_first_lo
 
             if is_first_loop and configs.reinitialize:
                 reinitializing = True
-                thread_ids.append(thread.get('no'))
+                thread_id_2_thread[thread['no']] = thread
                 thread_modified(board, thread, d_last_modified) # populate `d_last_modified`
                 continue
 
@@ -176,29 +175,36 @@ def filter_catalog(board: str, catalog: dict, d_last_modified: dict, is_first_lo
                 not_modified_thread_count += 1
                 continue
 
-            thread_ids.append(thread.get('no'))
+            thread_id_2_thread[thread['no']] = thread
 
     m = f'{not_modified_thread_count} threads not modified'
     if reinitializing:
         m = 'Ignoring last modified timestamps on first loop'
 
-    configs.logger.info(f'[{board}] {m}. Queuing {len(thread_ids)} threads.')
+    configs.logger.info(f'[{board}] {m}. Queuing {len(thread_id_2_thread.keys())} threads.')
 
-    return thread_ids
+    return thread_id_2_thread
 
 
-def get_non_deleted_post_ids_for_thread_nums(cursor: Cursor, board: str, thread_ids: list[int]) -> dict[int, list[int]]:
+def get_thread_nums_2_post_ids_from_db(cursor: Cursor, board: str, thread_ids: list[int]) -> tuple[dict[int, set[int]]]:
     if not thread_ids:
-        return {}
+        return ({}, {})
 
     placeholders = ','.join(['?'] * len(thread_ids))
-    sql = f"""select thread_num, num from `{board}` where thread_num in ({placeholders}) and deleted = 0;"""
+    sql = f"""select thread_num, num, deleted from `{board}` where thread_num in ({placeholders});"""
     cursor.execute(sql, thread_ids)
     results = cursor.fetchall()
-    d = defaultdict(list)
+
+    d_all = defaultdict(set)
+    d_not_deleted = defaultdict(set)
+
     for r in results:
-        d[r['thread_num']].append(r['num'])
-    return d
+        d_all[r['thread_num']].add(r['num'])
+
+        if not r['deleted']:
+            d_not_deleted[r['thread_num']].add(r['num'])
+
+    return d_all, d_not_deleted
 
 
 def set_posts_deleted(cursor: Cursor, board: str, post_ids: list[int]) -> None:
@@ -211,15 +217,12 @@ def set_posts_deleted(cursor: Cursor, board: str, post_ids: list[int]) -> None:
 
 
 def get_post_ids_from_thread(thread: dict) -> set[int]:
-    return {t['no'] for t in thread['posts']}
+    return {t['no'] for t in thread}
 
 
-def get_threads(cursor: Cursor, board: str, thread_ids: list[int]) -> list[dict]:
-    threads = []
-    deleted_post_ids = []
-
-    # one query, rather than one per thread
-    thread_num_2_prev_post_nums = get_non_deleted_post_ids_for_thread_nums(cursor, board, thread_ids)
+def get_threads_nums_2_posts_from_api(cursor: Cursor, board: str, thread_ids: list[int], thread_num_2_prev_post_nums_not_deleted: dict[int, list[int]]) -> dict[int, list[dict]]:
+    threads_nums_2_posts = dict()
+    newly_deleted_post_ids = []
 
     for thread_id in thread_ids:
         thread = fetch_json(
@@ -230,21 +233,21 @@ def get_threads(cursor: Cursor, board: str, thread_ids: list[int]) -> list[dict]
         )
         if thread:
             configs.logger.info(f'[{board}] Found thread [{thread_id}]')
-            
-            current_post_ids = get_post_ids_from_thread(thread)
-            previous_post_ids = thread_num_2_prev_post_nums.get(thread_id, [])
+
+            current_post_ids = get_post_ids_from_thread(thread['posts'])
+            previous_post_ids = thread_num_2_prev_post_nums_not_deleted.get(thread_id, [])
             for post_id in previous_post_ids:
                 if post_id not in current_post_ids:
-                    deleted_post_ids.append(post_id)
+                    newly_deleted_post_ids.append(post_id)
                     configs.logger.info(f'[{board}] Post Deleted [{thread_id}] [{post_id}]')
 
-            threads.append(thread)
+            threads_nums_2_posts[thread_id] = thread['posts']
         else:
             configs.logger.info(f'[{board}] Lost Thread [{thread_id}]')
 
-    if deleted_post_ids:
-        set_posts_deleted(cursor, board, deleted_post_ids)
-    return threads
+    if newly_deleted_post_ids:
+        set_posts_deleted(cursor, board, newly_deleted_post_ids)
+    return threads_nums_2_posts
 
 
 def do_upsert(cursor: Cursor, table: str, d: dict, conflict_col: str, returning: str):
@@ -277,29 +280,39 @@ def do_upsert_many(cursor: Cursor, table: str, rows: list[dict], conflict_col: s
         cursor.execute(sql, flat_values)
 
 
-def upsert_threads(cursor, board: str, threads: list[dict]):
-    post_rows = []
+def upsert_thread_num_2_posts(cursor, board: str, thread_num_2_posts: dict[int, list[dict]], thread_num_2_stats: dict[int, dict]):
     thread_rows = []
+    post_rows = []
 
-    for thread in threads:
-        d_thread = get_d_thread(thread)
+    for thread_num, posts in thread_num_2_posts.items():
+        d_thread = {
+            'thread_num': thread_num,
+            'time_op': thread_num_2_stats[thread_num]['time_op'],
+            'time_last': posts[-1]['time'],
+            'time_bump': posts[-1]['time'],
+            'time_ghost': None,
+            'time_ghost_bump': None,
+            'time_last_modified': 0,
+            'nreplies': thread_num_2_stats[thread_num]['nreplies'],
+            'nimages': thread_num_2_stats[thread_num]['nimages'],
+            'sticky': 0,
+            'locked': 0,
+        }
         thread_rows.append(d_thread)
 
-        is_op = True
-        for post in thread['posts']:
+        for post in posts:
             if post_is_sticky(post):
-                is_op = False
                 continue
 
             media_id = None
             if post_has_file(post):
+                is_op = post['resto'] == 0
                 d_image = get_d_image(post, is_op)
                 media_id = do_upsert(cursor, f'{board}_images', d_image, 'media_hash', 'media_id')
                 assert media_id
 
             d_board = get_d_board(post, media_id, unescape_data_b4_db_write=configs.unescape_data_b4_db_write)
             post_rows.append(d_board)
-            is_op = False
 
     do_upsert_many(cursor, board, post_rows, 'num')
     do_upsert_many(cursor, f'{board}_threads', thread_rows, 'thread_num')
@@ -319,47 +332,47 @@ def match_sub_and_com(post_op: dict, pattern: str):
 
 
 def download_thread_media(board: str, threads: list[dict], media_type: MediaType):
-    for thread in threads:
-        for post in thread['posts']:
-            if post_has_file(post):
-                tim = post.get('tim') if post.get('tim') else time.time()
-                ext = post.get('ext')
-                assert tim
-                assert ext
+    for post in threads:
+        assert post['no']
+        if post_has_file(post):
+            tim = post.get('tim') if post.get('tim') else time.time()
+            ext = post.get('ext')
+            assert tim
+            assert ext
 
-                if media_type == MediaType.thumbnail:
-                    board_thumb_pattern = configs.boards[board].get('dl_thumbs')
-                    if isinstance(board_thumb_pattern, str) and not match_sub_and_com(thread['posts'][0], board_thumb_pattern):
-                        continue
+            if media_type == MediaType.thumbnail:
+                board_thumb_pattern = configs.boards[board].get('dl_thumbs')
+                if isinstance(board_thumb_pattern, str) and not match_sub_and_com(threads[0], board_thumb_pattern):
+                    continue
 
-                    if configs.url_thumbnail is None:
-                        configs.logger.info('Warning: this site does not support thumbnail downloads.')
+                if configs.url_thumbnail is None:
+                    configs.logger.info('Warning: this site does not support thumbnail downloads.')
 
-                    url = configs.url_thumbnail.format(board=board, image_id=tim)
-                    filename = get_fs_filename_thumbnail(post)
-                    filepath = get_filepath(configs.media_save_path, board, MediaType.thumbnail.value, filename)
+                url = configs.url_thumbnail.format(board=board, image_id=tim)
+                filename = get_fs_filename_thumbnail(post)
+                filepath = get_filepath(configs.media_save_path, board, MediaType.thumbnail.value, filename)
 
-                elif media_type == MediaType.full_media:
-                    board_full_media_pattern = configs.boards[board].get('dl_full_media')
-                    if isinstance(board_full_media_pattern, str) and not match_sub_and_com(thread['posts'][0], board_full_media_pattern):
-                        continue
+            elif media_type == MediaType.full_media:
+                board_full_media_pattern = configs.boards[board].get('dl_full_media')
+                if isinstance(board_full_media_pattern, str) and not match_sub_and_com(threads[0], board_full_media_pattern):
+                    continue
 
-                    url = configs.url_full_media.format(board=board, image_id=tim, ext=ext)
-                    filename = get_fs_filename_full_media(post)
-                    filepath = get_filepath(configs.media_save_path, board, MediaType.full_media.value, filename)
+                url = configs.url_full_media.format(board=board, image_id=tim, ext=ext)
+                filename = get_fs_filename_full_media(post)
+                filepath = get_filepath(configs.media_save_path, board, MediaType.full_media.value, filename)
 
-                else:
-                    raise ValueError(media_type)
+            else:
+                raise ValueError(media_type)
 
-                # os.path.isfile is cheap, no need for a cache
-                if not os.path.isfile(filepath):
-                    result = download_file(url, filepath)
-                    if result:
-                        configs.logger.info(f"[{board}] Downloaded [{media_type.value}] {filepath}")
-                        if media_type == MediaType.full_media and configs.make_thumbnails:
-                            thumb_path = get_filepath(configs.media_save_path, board, MediaType.thumbnail.value, get_fs_filename_thumbnail(post))
-                            sleep(0.1, add_random=configs.add_random)
-                            create_thumbnail(post, filepath, thumb_path, logger=configs.logger)
+            # os.path.isfile is cheap, no need for a cache
+            if not os.path.isfile(filepath):
+                result = download_file(url, filepath)
+                if result:
+                    configs.logger.info(f"[{board}] Downloaded [{media_type.value}] {filepath}")
+                    if media_type == MediaType.full_media and configs.make_thumbnails:
+                        thumb_path = get_filepath(configs.media_save_path, board, MediaType.thumbnail.value, get_fs_filename_thumbnail(post))
+                        sleep(0.1, add_random=configs.add_random)
+                        create_thumbnail(post, filepath, thumb_path, logger=configs.logger)
 
 
 def create_non_existing_tables():
@@ -382,6 +395,72 @@ def create_non_existing_tables():
     conn.close()
 
 
+def get_new_posts_and_stats(cursor, board, thread_id_2_threads, thread_id_2_catalog_last_replies):
+    """
+    In previous versions of Ritual, we would just grab entire threads, as toss them at sqlite like it wasn't our problem.
+    Now, we carefully try to select posts we have not yet archived, and gently hand them to sqlite.
+    """
+    # query the database to see which of threads we already have, if any
+    ti = time.perf_counter()
+    thread_ids = list(thread_id_2_threads.keys())
+
+    thread_num_2_prev_post_nums_all, thread_num_2_prev_post_nums_not_deleted = get_thread_nums_2_post_ids_from_db(cursor, board, thread_ids)
+    
+    tf = time.perf_counter()
+    configs.logger.info(f'Searched for {len(thread_ids)} existing threads from {board} in {tf-ti:.4f}s')
+
+    thread_num_2_new_posts = dict()
+    thread_num_2_stats = dict()
+    thread_ids_to_fetch = []
+
+    for thread_id in thread_ids:
+
+        stats = thread_id_2_threads[thread_id]
+        thread_num_2_stats[thread_id] = {
+            'time_op': stats['time'],
+            'nreplies': stats['replies'],
+            'nimages': stats['images'],
+        }
+
+        catalog_last_replies = thread_id_2_catalog_last_replies.get(thread_id, [])
+        catalog_last_reply_nums = set((r['no'] for r in catalog_last_replies))
+
+        archive_nums = thread_num_2_prev_post_nums_all.get(thread_id, set())
+
+        # catalog-last-replies not supported by API, or new thread, or something else - just fetch it
+        if not catalog_last_reply_nums or not archive_nums:
+            thread_ids_to_fetch.append(thread_id)
+            continue
+
+        # all matched, nothing new
+        if catalog_last_reply_nums.issubset(archive_nums):
+            continue
+
+        # any matched
+        if catalog_last_reply_nums & archive_nums:
+            nums_not_in_archive = catalog_last_reply_nums - archive_nums
+            thread_num_2_new_posts[thread_id] = [r for r in catalog_last_replies if r['no'] in nums_not_in_archive]
+            continue
+
+        # none matched
+        thread_ids_to_fetch.append(thread_id)
+
+    threads_nums_2_posts = get_threads_nums_2_posts_from_api(
+        cursor,
+        board,
+        thread_ids_to_fetch,
+        thread_num_2_prev_post_nums_not_deleted=thread_num_2_prev_post_nums_not_deleted
+    )
+
+    for thread_id, posts in threads_nums_2_posts.items():
+        fetched_post_ids = {p['no'] for p in posts}
+        new_posts_ids = fetched_post_ids - thread_num_2_prev_post_nums_all.get(thread_id, set())
+        if new_posts_ids:
+            thread_num_2_new_posts[thread_id] = [p for p in posts if p['no'] in new_posts_ids]
+
+    return thread_num_2_new_posts, thread_num_2_stats
+
+
 def main():
     test_deps()
 
@@ -390,6 +469,7 @@ def main():
     d_last_modified = dict() # {g: {123: 1717755968, 124: 1717755999}}
 
     is_first_loop = True
+    loop_i = 1
 
     while True:
         conn = get_connection()
@@ -400,33 +480,40 @@ def main():
         for board in tqdm.tqdm(configs.boards, disable=configs.disable_tqdm):
             start = time.time()
 
-            catalog = get_catalog(board)
+            catalog = get_catalog_from_api(board)
             if not catalog:
                 configs.logger.info(f"Catalog returned {catalog}")
                 continue
 
-            thread_ids = filter_catalog(board, catalog, d_last_modified, is_first_loop)
+            # 5 lastest replies per thread are free, at least when archiving 4chan
+            thread_id_2_catalog_last_replies = get_thread_id_2_last_replies(catalog)
 
-            threads = get_threads(cursor, board, thread_ids)
+            # these are the threads we want to archive
+            thread_id_2_threads = filter_catalog(board, catalog, d_last_modified, is_first_loop)
+
+            # only new posts returns for inserting
+            thread_num_2_new_posts, thread_num_2_stats = get_new_posts_and_stats(cursor, board, thread_id_2_threads, thread_id_2_catalog_last_replies)
+
+            if not thread_num_2_new_posts:
+                configs.logger.info('No new posts found.')
+                continue
 
             if configs.boards[board].get('thread_text'):
-                upsert_threads(cursor, board, threads)
+                upsert_thread_num_2_posts(cursor, board, thread_num_2_new_posts, thread_num_2_stats)
                 conn.commit()
 
             if configs.boards[board].get('dl_full_media_op'):
-                op_threads = get_op_threads(threads)
-                download_thread_media(board, op_threads, MediaType.full_media)
+                download_thread_media(board, thread_id_2_threads.values(), MediaType.full_media)
 
             if configs.boards[board].get('dl_full_media'):
-                download_thread_media(board, threads, MediaType.full_media)
+                download_thread_media(board, thread_num_2_new_posts.values(), MediaType.full_media)
 
             # only dl thumbs if we are not instructed to make them
             if configs.boards[board].get('dl_thumbs_op') and not (configs.make_thumbnails and configs.boards[board].get('dl_full_media_op') and configs.boards[board].get('dl_full_media')):
-                op_threads = get_op_threads(threads)
-                download_thread_media(board, op_threads, MediaType.thumbnail)
+                download_thread_media(board, thread_id_2_threads.values(), MediaType.thumbnail)
 
             if configs.boards[board].get('dl_thumbs') and not (configs.make_thumbnails and configs.boards[board].get('dl_full_media_op') and configs.boards[board].get('dl_full_media')):
-                download_thread_media(board, threads, MediaType.thumbnail)
+                download_thread_media(board, thread_num_2_new_posts.values(), MediaType.thumbnail)
 
             times[board] = round((time.time() - start) / 60, 2) # minutes
 
@@ -435,7 +522,7 @@ def main():
         cursor.close()
         conn.close()
 
-        configs.logger.info("Loop Completed")
+        configs.logger.info(f"Loop {loop_i} Completed")
         configs.logger.info("Duration for each board:")
 
         for board, duration in times.items():
@@ -445,6 +532,7 @@ def main():
         configs.logger.info(f"Total Duration: {total_duration}m")
         configs.logger.info(f"Going to sleep for {configs.loop_cooldown_sec}s")
 
+        loop_i += 1
         time.sleep(configs.loop_cooldown_sec)
 
 

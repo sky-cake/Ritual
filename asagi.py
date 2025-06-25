@@ -150,19 +150,6 @@ def get_filepath(media_save_path: str, board: str, media_type: MediaType, filena
     return os.path.join(dir_path, filename)
 
 
-def get_op_threads(threads):
-    if not threads:
-        return []
-
-    op_threads = []
-    for thread in threads:
-        for post in thread['posts']:
-            if post['resto'] == 0:
-                op_threads.append({'posts': [post]})
-
-    return op_threads
-
-
 def get_thread_id_2_last_replies(catalog):
     thread_id_2_last_replies = {}
     for page in catalog:
@@ -218,20 +205,4 @@ def get_d_image(post: dict, is_op: bool):
         'preview_reply': get_fs_filename_thumbnail(post) if not is_op else None,
         'total': 0,
         'banned': 0,
-    }
-
-
-def get_d_thread(thread: dict):
-    return {
-        'thread_num': thread['posts'][0]['no'],
-        'time_op': thread['posts'][0]['time'],
-        'time_last': thread['posts'][-1]['time'],
-        'time_bump': thread['posts'][-1]['time'],
-        'time_ghost': None,
-        'time_ghost_bump': None,
-        'time_last_modified': 0,
-        'nreplies': len(thread['posts']) - 1,
-        'nimages': len([None for post in thread['posts'] if post_has_file(post)]),
-        'sticky': 0,
-        'locked': 0,
     }
