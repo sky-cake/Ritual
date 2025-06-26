@@ -5,7 +5,6 @@ import time
 from collections import defaultdict
 from sqlite3 import Cursor
 
-import requests
 import tqdm
 
 import configs
@@ -23,44 +22,12 @@ from asagi import (
 from db import get_connection
 from enums import MediaType
 from utils import (
+    download_file,
     fetch_json,
-    is_image_path,
-    is_video_path,
     make_path,
     sleep,
     test_deps
 )
-
-
-def download_file(url: str, filename: str):
-    if is_video_path(filename):
-        ts = [configs.video_cooldown_sec, 4.0, 6.0, 10.0]
-    elif is_image_path(filename):
-        ts = [configs.image_cooldown_sec, 4.0, 6.0, 10.0]
-    else:
-        raise ValueError(filename)
-
-    for i, t in enumerate(ts):
-        resp = requests.get(url, headers=configs.headers)
-        if i > 0:
-            configs.logger.warning(f'Incrementing 1 sec: {configs.video_cooldown_sec=} {configs.image_cooldown_sec=}')
-            configs.video_cooldown_sec += 1.0
-            configs.image_cooldown_sec += 1.0
-            configs.logger.warning(f'Incremented 1 sec: {configs.video_cooldown_sec=} {configs.image_cooldown_sec=}')
-
-        sleep(t, add_random=configs.add_random)
-
-        if resp.status_code != 200:
-            configs.logger.warning(f'{url=} {resp.status_code=}')
-            return
-
-        if resp.status_code == 200 and resp.content:
-            with open(filename, 'wb') as f:
-                f.write(resp.content)
-            return True
-        
-        configs.logger.warning(f'No content {url=} {filename=} {resp.content=}')
-    configs.logger.warning(f'Max retries exceeded {url=} {filename=}')
 
 
 def get_catalog_from_api(board) -> dict:
@@ -366,7 +333,15 @@ def download_thread_media(board: str, threads: list[dict], media_type: MediaType
 
             # os.path.isfile is cheap, no need for a cache
             if not os.path.isfile(filepath):
-                result = download_file(url, filepath)
+                result = download_file(
+                    url,
+                    filepath,
+                    video_cooldown_sec=configs.video_cooldown_sec,
+                    image_cooldown_sec=configs.image_cooldown_sec,
+                    add_random=configs.add_random,
+                    headers=configs.headers,
+                    logger=configs.logger,
+                )
                 if result:
                     configs.logger.info(f"[{board}] Downloaded [{media_type.value}] {filepath}")
                     if media_type == MediaType.full_media and configs.make_thumbnails:
@@ -395,7 +370,7 @@ def create_non_existing_tables():
     conn.close()
 
 
-def get_new_posts_and_stats(cursor, board, thread_id_2_threads, thread_id_2_catalog_last_replies):
+def get_new_posts_and_stats(cursor, board, thread_id_2_threads, thread_id_2_catalog_last_replies) -> tuple[dict, dict]:
     """
     In previous versions of Ritual, we would just grab entire threads, as toss them at sqlite like it wasn't our problem.
     Now, we carefully try to select posts we have not yet archived, and gently hand them to sqlite.
@@ -403,6 +378,8 @@ def get_new_posts_and_stats(cursor, board, thread_id_2_threads, thread_id_2_cata
     # query the database to see which of threads we already have, if any
     ti = time.perf_counter()
     thread_ids = list(thread_id_2_threads.keys())
+    if not thread_ids:
+        return {}, {}
 
     thread_num_2_prev_post_nums_all, thread_num_2_prev_post_nums_not_deleted = get_thread_nums_2_post_ids_from_db(cursor, board, thread_ids)
     
@@ -461,8 +438,20 @@ def get_new_posts_and_stats(cursor, board, thread_id_2_threads, thread_id_2_cata
     return thread_num_2_new_posts, thread_num_2_stats
 
 
+def write_new_posts_and_stats(cursor: Cursor, board: str, thread_num_2_new_posts: dict[int, dict], thread_num_2_stats: dict[int, dict]):
+    try:
+        upsert_thread_num_2_posts(cursor, board, thread_num_2_new_posts, thread_num_2_stats)
+        cursor.connection.commit()
+    except Exception as e:
+        configs.logger.error(f'Rolling back and retrying execute()s and commit() due to:\n{e}')
+        cursor.connection.rollback()
+        sleep(0.25)
+        upsert_thread_num_2_posts(cursor, board, thread_num_2_new_posts, thread_num_2_stats)
+        cursor.connection.commit()
+
+
 def main():
-    test_deps()
+    test_deps(configs.logger)
 
     create_non_existing_tables()
 
@@ -475,7 +464,7 @@ def main():
         conn = get_connection()
         cursor = conn.cursor()
 
-        configs.logger.info(f'Loop Started')
+        configs.logger.info(f'Loop #{loop_i} Started')
         times = {}
         for board in tqdm.tqdm(configs.boards, disable=configs.disable_tqdm):
             start = time.time()
@@ -499,8 +488,7 @@ def main():
                 continue
 
             if configs.boards[board].get('thread_text'):
-                upsert_thread_num_2_posts(cursor, board, thread_num_2_new_posts, thread_num_2_stats)
-                conn.commit()
+                write_new_posts_and_stats(cursor, board, thread_num_2_new_posts, thread_num_2_stats)
 
             if configs.boards[board].get('dl_full_media_op'):
                 download_thread_media(board, thread_id_2_threads.values(), MediaType.full_media)
@@ -522,7 +510,7 @@ def main():
         cursor.close()
         conn.close()
 
-        configs.logger.info(f"Loop {loop_i} Completed")
+        configs.logger.info(f"Loop #{loop_i} Completed")
         configs.logger.info("Duration for each board:")
 
         for board, duration in times.items():
