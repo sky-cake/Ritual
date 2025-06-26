@@ -474,13 +474,13 @@ def main():
                 configs.logger.info(f"Catalog returned {catalog}")
                 continue
 
-            # 5 lastest replies per thread are free, at least when archiving 4chan
+            # 5 lastest replies per thread are free, at least when archiving 4chan and vichan archives
             thread_id_2_catalog_last_replies = get_thread_id_2_last_replies(catalog)
 
             # these are the threads we want to archive
             thread_id_2_threads = filter_catalog(board, catalog, d_last_modified, is_first_loop)
 
-            # only new posts returns for inserting
+            # only get the new posts for inserting
             thread_num_2_new_posts, thread_num_2_stats = get_new_posts_and_stats(cursor, board, thread_id_2_threads, thread_id_2_catalog_last_replies)
 
             if not thread_num_2_new_posts:
@@ -496,7 +496,7 @@ def main():
             if configs.boards[board].get('dl_full_media'):
                 download_thread_media(board, thread_num_2_new_posts.values(), MediaType.full_media)
 
-            # only dl thumbs if we are not instructed to make them
+            # only dl thumbs if we are not instructed to generate them with Convert or FFMPEG
             if configs.boards[board].get('dl_thumbs_op') and not (configs.make_thumbnails and configs.boards[board].get('dl_full_media_op') and configs.boards[board].get('dl_full_media')):
                 download_thread_media(board, thread_id_2_threads.values(), MediaType.thumbnail)
 
