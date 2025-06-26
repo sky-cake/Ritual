@@ -39,14 +39,14 @@ url_thumbnail = "https://i.4cdn.org/{board}/{image_id}s.jpg" # str or None
 
 
 logger_name = 'ritual'
-log_file = make_path("ritual.log") # or False if you don't want log files
+log_file = False # or make_path("ritual.log") if you want to log to files
 MB_5 = 5 * 1024 * 1024
 logger = setup_logger(logger_name, log_file=log_file, stdout=True, file_rotate_size=MB_5, max_files=3)
 
 # logger.info = tqdm.tqdm.write # do this when using stdout logging and tqdm
 disable_tqdm = True
 
-make_thumbnails = True # don't download thumbnails, create them when downloading full media
+make_thumbnails = False # don't download thumbnails, create them when downloading full media
 
 # ARCHIVE RULES - What to archive.
 
