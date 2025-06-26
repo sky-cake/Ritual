@@ -40,13 +40,17 @@ def setup_logger(logger_name, log_file=False, stdout=True, file_rotate_size=1 * 
     return logger
 
 
-def save_json(name, o):
-    with open(make_path('json', f'{name}.json'), mode='w', encoding='utf-8') as f:
-        json.dump(o, f)
+def write_json(fpath, obj):
+    os.makedirs(os.path.dirname(fpath), exist_ok=True)
+    with open(fpath, mode='w', encoding='utf-8') as f:
+        json.dump(obj, f)
 
 
-def read_json(name):
-    with open(make_path('json', f'{name}.json'), mode='r', encoding='utf-8') as f:
+def read_json(fpath):
+    if not os.path.isfile(fpath):
+        return None
+
+    with open(fpath, mode='r', encoding='utf-8') as f:
         return json.load(f)
 
 

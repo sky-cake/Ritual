@@ -8,9 +8,9 @@ class TestThreadModified(unittest.TestCase):
     def setUp(self):
         self.d_last_modified = {
             'board1': {
-                1001: {'last_modified': 1620500000},
-                1002: {'last_modified': 1620600000},
-                1003: {'last_modified': 1620700000},
+                1001: 1620500000,
+                1002: 1620600000,
+                1003: 1620700000,
             }
         }
 
@@ -33,7 +33,7 @@ class TestThreadModified(unittest.TestCase):
 
     def test_max_entries(self):
         for i in range(4, 205):
-            self.d_last_modified['board1'][i] = {'last_modified': 1620800000 + i}
+            self.d_last_modified['board1'][i] = 1620800000 + i
 
         thread = {'no': 205, 'last_modified': 1620900000}
         self.assertTrue(thread_modified('board1', thread, self.d_last_modified))

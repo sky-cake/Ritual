@@ -26,7 +26,9 @@ from utils import (
     fetch_json,
     make_path,
     sleep,
-    test_deps
+    test_deps,
+    read_json,
+    write_json
 )
 
 
@@ -84,25 +86,23 @@ def should_archive(board: str, subject: str, comment: str, whitelist: str =None,
 
 def thread_modified(board: str, thread: dict, d_last_modified: dict) -> bool:
     """`True` indicates we should download the thread. Also handles the `d_last_modified` cache."""
-    no = thread.get('no')
+    thread_id = thread['no']
     thread_last_modified = thread.get('last_modified')
 
     if board not in d_last_modified:
         d_last_modified[board] = {}
-    if no not in d_last_modified[board]:
-        d_last_modified[board][no] = {}
 
-    thread_last_modified_cached = d_last_modified[board][no].get('last_modified')
+    thread_last_modified_cached = d_last_modified[board].get(thread_id)
 
     # Update the thread's last modified time in d_last_modified.
-    d_last_modified[board][no]['last_modified'] = thread_last_modified
+    d_last_modified[board][thread_id] = thread_last_modified
 
     # Don't let the dict grow over N entries per board.
     N = 200
     if len(d_last_modified[board]) > N:
         # In case of multiple stickies, or similar special threads, we delete M oldest threads
         M = 10
-        tmp_nos = sorted(d_last_modified[board], key=lambda no: d_last_modified[board][no]['last_modified'])
+        tmp_nos = sorted(d_last_modified[board], key=lambda no: d_last_modified[board][no])
         for stale_no in tmp_nos[:M]:
             del d_last_modified[board][stale_no]
 
@@ -144,11 +144,11 @@ def filter_catalog(board: str, catalog: dict, d_last_modified: dict, is_first_lo
 
             thread_id_2_thread[thread['no']] = thread
 
-    m = f'{not_modified_thread_count} threads not modified'
+    m = f'{not_modified_thread_count} threads are unmodified. ' if not_modified_thread_count else ''
     if reinitializing:
-        m = 'Ignoring last modified timestamps on first loop'
+        m = 'Ignoring last modified timestamps on first loop. '
 
-    configs.logger.info(f'[{board}] {m}. Queuing {len(thread_id_2_thread.keys())} threads.')
+    configs.logger.info(f'[{board}] {m}Queuing {len(thread_id_2_thread.keys())} modified threads.')
 
     return thread_id_2_thread
 
@@ -455,7 +455,11 @@ def main():
 
     create_non_existing_tables()
 
-    d_last_modified = dict() # {g: {123: 1717755968, 124: 1717755999}}
+    # {g: {123: 1717755968, 124: 1717755999}}
+    fpath_d_last_modified = make_path('cache', 'd_last_modified')
+    d_last_modified = read_json(fpath_d_last_modified)
+    if not d_last_modified:
+        d_last_modified = dict()
 
     is_first_loop = True
     loop_i = 1
@@ -519,6 +523,8 @@ def main():
         total_duration = round(sum(times.values()), 1)
         configs.logger.info(f"Total Duration: {total_duration}m")
         configs.logger.info(f"Going to sleep for {configs.loop_cooldown_sec}s")
+
+        write_json(fpath_d_last_modified, d_last_modified)
 
         loop_i += 1
         time.sleep(configs.loop_cooldown_sec)
