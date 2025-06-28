@@ -16,7 +16,7 @@ def is_post_media_file_video(post):
 
 
 def is_post_media_file_image(post):
-    return post.get('ext', '').endswith(('jpg', 'png', 'jpeg', 'webp'))
+    return post.get('ext', '').endswith(('jpg', 'png', 'jpeg', 'webp', 'bmp'))
 
 
 def convert_to_asagi_capcode(a):
