@@ -115,7 +115,7 @@ def is_video_path(path: str) -> bool:
 
 
 def is_image_path(path: str) -> bool:
-    return path.endswith(('jpg', 'jpeg', 'png'))
+    return path.endswith(('jpg', 'jpeg', 'png', 'webp', 'bmp'))
 
 
 class MaxQueue:
