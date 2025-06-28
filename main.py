@@ -395,7 +395,7 @@ def get_new_posts_and_stats(cursor, board, thread_num_2_op, thread_id_2_catalog_
     thread_num_2_prev_post_nums_all, thread_num_2_prev_post_nums_not_deleted = get_thread_nums_2_post_ids_from_db(cursor, board, thread_ids)
     
     tf = time.perf_counter()
-    configs.logger.info(f'[{board}] Searched database for {len(thread_ids)} threads in {tf-ti:.4f}s')
+    configs.logger.info(f'[{board}] Queried database for {len(thread_ids)} threads in {tf-ti:.4f}s')
 
     thread_num_2_new_posts = dict()
     thread_num_2_stats = dict()
