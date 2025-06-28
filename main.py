@@ -144,11 +144,11 @@ def filter_catalog(board: str, catalog: dict, d_last_modified: dict, is_first_lo
 
             thread_id_2_thread[thread['no']] = thread
 
-    m = f'{not_modified_thread_count} threads are unmodified. ' if not_modified_thread_count else ''
+    m = f'{not_modified_thread_count} thread(s) are unmodified. ' if not_modified_thread_count else ''
     if reinitializing:
         m = 'Ignoring last modified timestamps on first loop. '
 
-    configs.logger.info(f'[{board}] {m}Queuing {len(thread_id_2_thread.keys())} modified threads.')
+    configs.logger.info(f'[{board}] {m}{len(thread_id_2_thread.keys())} thread(s) are modified and will be queued.')
 
     return thread_id_2_thread
 
@@ -395,7 +395,7 @@ def get_new_posts_and_stats(cursor, board, thread_num_2_op, thread_id_2_catalog_
     thread_num_2_prev_post_nums_all, thread_num_2_prev_post_nums_not_deleted = get_thread_nums_2_post_ids_from_db(cursor, board, thread_ids)
     
     tf = time.perf_counter()
-    configs.logger.info(f'Searched for {len(thread_ids)} existing threads from {board} in {tf-ti:.4f}s')
+    configs.logger.info(f'[{board}] Searched database for {len(thread_ids)} threads in {tf-ti:.4f}s')
 
     thread_num_2_new_posts = dict()
     thread_num_2_stats = dict()
@@ -462,7 +462,8 @@ def write_new_posts_and_stats(cursor: Cursor, board: str, thread_num_2_new_posts
 
 
 def main():
-    test_deps(configs.logger)
+    if configs.make_thumbnails:
+        test_deps(configs.logger)
 
     create_non_existing_tables()
 
@@ -479,7 +480,7 @@ def main():
         conn = get_connection()
         cursor = conn.cursor()
 
-        configs.logger.info(f'Loop #{loop_i} Started')
+        configs.logger.info(f'\nLoop #{loop_i} Started')
         times = {}
         for board in tqdm.tqdm(configs.boards, disable=configs.disable_tqdm):
             start = time.time()
@@ -531,11 +532,11 @@ def main():
         configs.logger.info("Duration for each board:")
 
         for board, duration in times.items():
-            configs.logger.info(f' {board:<4} {duration:.1f}m')
+            configs.logger.info(f'    - {board:<4} {duration:.1f}m')
 
         total_duration = round(sum(times.values()), 1)
         configs.logger.info(f"Total Duration: {total_duration}m")
-        configs.logger.info(f"Going to sleep for {configs.loop_cooldown_sec}s")
+        configs.logger.info(f"Doing loop cooldown sleep for {configs.loop_cooldown_sec}s")
 
         write_json(fpath_d_last_modified, d_last_modified)
 

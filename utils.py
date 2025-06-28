@@ -159,7 +159,7 @@ def create_thumbnail_from_video(video_path: str, out_path: str, width: int=400, 
     try:
         subprocess.run(command, shell=True, check=True, stdout=subprocess.DEVNULL)
         if logger:
-            logger.info(f'Created thumb {os.path.getsize(video_path) / 1024:.1f}kb -> {os.path.getsize(out_path) / 1024:.1f}kb')
+            logger.info(f'    Created thumb {os.path.getsize(video_path) / 1024:.1f}kb -> {os.path.getsize(out_path) / 1024:.1f}kb')
     except Exception as e:
         if logger:
             logger.error(f'Error creating thumbnail from {video_path}\n{str(e)}')
@@ -176,7 +176,7 @@ def create_thumbnail_from_image(image_path: str, out_path: str, width: int=400, 
     try:
         subprocess.run(command, shell=True, check=True, stdout=subprocess.DEVNULL)
         if logger:
-            logger.info(f'Created thumb {os.path.getsize(image_path) / 1024:.1f}kb -> {os.path.getsize(out_path) / 1024:.1f}kb')
+            logger.info(f'    Created thumb {os.path.getsize(image_path) / 1024:.1f}kb -> {os.path.getsize(out_path) / 1024:.1f}kb')
     except Exception as e:
         if logger:
-            logger.error(f'Error creating thumbnail from {image_path}\n{str(e)}')
+            logger.error(f'    Error creating thumbnail from {image_path}\n{str(e)}')

@@ -11,9 +11,9 @@ def dict_factory(cursor, row):
 
 
 def get_connection():
-    print('Creating database connection, started.')
+    # print('Creating database connection, started.')
     assert isinstance(configs.database, str)
     connection = sqlite3.connect(configs.database)
     connection.row_factory = dict_factory
-    print('Creating database connection, completed.')
+    # print('Creating database connection, completed.')
     return connection
