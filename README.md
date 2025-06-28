@@ -37,6 +37,14 @@ Ritual will create schemas for you.
 Recently, there was an update to the code to make it fully asagi schema compliant. Please make a backup of your database, then run the script `./migrations/migrate_asagi.py`. After this, you can run `VACUUM;` on your database. The result of this will be a `.db` file the same size as before the migrations.
 
 
+## Backups
+
+```
+sqlite3 /path/to/db "VACUUM INTO '/path/to/backup'"
+sqlite3 /path/to/backup 'PRAGMA integrity_check' # optional
+gzip /path/to/backup # optional
+```
+
 ## Configurations
 
 Here is how the flexible archive configurations work.
