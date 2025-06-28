@@ -6,6 +6,7 @@ from collections import defaultdict
 from sqlite3 import Cursor
 
 import tqdm
+from requests import Session
 
 import configs
 from asagi import (
@@ -28,16 +29,17 @@ from utils import (
     sleep,
     test_deps,
     read_json,
-    write_json
+    write_json,
 )
 
 
-def get_catalog_from_api(board) -> dict:
+def get_catalog_from_api(board, session: Session=None) -> dict:
     catalog = fetch_json(
         configs.url_catalog.format(board=board),
         headers=configs.headers,
         request_cooldown_sec=configs.request_cooldown_sec,
-        add_random=configs.add_random
+        add_random=configs.add_random,
+        session=session,
     )
     configs.logger.info(f'[{board}] Downloaded catalog')
     if catalog:
@@ -187,7 +189,7 @@ def get_post_ids_from_thread(thread: dict) -> set[int]:
     return {t['no'] for t in thread}
 
 
-def get_threads_nums_2_posts_from_api(cursor: Cursor, board: str, thread_ids: list[int], thread_num_2_prev_post_nums_not_deleted: dict[int, list[int]]) -> dict[int, list[dict]]:
+def get_threads_nums_2_posts_from_api(cursor: Cursor, board: str, thread_ids: list[int], thread_num_2_prev_post_nums_not_deleted: dict[int, list[int]], session: Session=None) -> dict[int, list[dict]]:
     threads_nums_2_posts = dict()
     newly_deleted_post_ids = []
 
@@ -196,7 +198,8 @@ def get_threads_nums_2_posts_from_api(cursor: Cursor, board: str, thread_ids: li
             configs.url_thread.format(board=board, thread_id=thread_id),
             headers=configs.headers,
             request_cooldown_sec=configs.request_cooldown_sec,
-            add_random=configs.add_random
+            add_random=configs.add_random,
+            session=session,
         )
         if thread:
             configs.logger.info(f'[{board}] Found thread [{thread_id}]')
@@ -298,7 +301,7 @@ def match_sub_and_com(post_op: dict, pattern: str):
     return False
 
 
-def download_thread_media_for_post(board: str, thread_op_post: dict, post: dict, media_type: MediaType):
+def download_thread_media_for_post(board: str, thread_op_post: dict, post: dict, media_type: MediaType, session: Session=None):
     assert post['no']
     if post_has_file(post):
         tim = post.get('tim') if post.get('tim') else time.time()
@@ -340,6 +343,7 @@ def download_thread_media_for_post(board: str, thread_op_post: dict, post: dict,
                 add_random=configs.add_random,
                 headers=configs.headers,
                 logger=configs.logger,
+                session=session,
             )
             if result:
                 configs.logger.info(f"[{board}] Downloaded [{media_type.value}] {filepath}")
@@ -349,16 +353,16 @@ def download_thread_media_for_post(board: str, thread_op_post: dict, post: dict,
                     create_thumbnail(post, filepath, thumb_path, logger=configs.logger)
 
 
-def download_thread_media_for_op(board: str, thread_num_2_op: dict[int, dict], media_type: MediaType):
+def download_thread_media_for_op(board: str, thread_num_2_op: dict[int, dict], media_type: MediaType, session: Session=None):
     for thread_num, op_post in thread_num_2_op.items():
-        download_thread_media_for_post(board, op_post, op_post, media_type)
+        download_thread_media_for_post(board, op_post, op_post, media_type, session=session)
 
 
-def download_thread_media_for_new_posts(board: str, thread_num_2_new_posts: dict[int, dict], thread_num_2_op: dict[int, dict], media_type: MediaType):
+def download_thread_media_for_new_posts(board: str, thread_num_2_new_posts: dict[int, dict], thread_num_2_op: dict[int, dict], media_type: MediaType, session: Session=None):
     for thread_num, new_posts in thread_num_2_new_posts.items():
         thread_op_post = thread_num_2_op[thread_num]
         for post in new_posts:
-            download_thread_media_for_post(board, thread_op_post, post, media_type)
+            download_thread_media_for_post(board, thread_op_post, post, media_type, session=session)
 
 
 def create_non_existing_tables():
@@ -381,7 +385,7 @@ def create_non_existing_tables():
     conn.close()
 
 
-def get_new_posts_and_stats(cursor, board, thread_num_2_op, thread_id_2_catalog_last_replies) -> tuple[dict, dict]:
+def get_new_posts_and_stats(cursor, board, thread_num_2_op, thread_id_2_catalog_last_replies, session: Session=None) -> tuple[dict, dict]:
     """
     In previous versions of Ritual, we would just grab entire threads, as toss them at sqlite like it wasn't our problem.
     Now, we carefully try to select posts we have not yet archived, and gently hand them to sqlite.
@@ -437,7 +441,8 @@ def get_new_posts_and_stats(cursor, board, thread_num_2_op, thread_id_2_catalog_
         cursor,
         board,
         thread_ids_to_fetch,
-        thread_num_2_prev_post_nums_not_deleted=thread_num_2_prev_post_nums_not_deleted
+        thread_num_2_prev_post_nums_not_deleted=thread_num_2_prev_post_nums_not_deleted,
+        session=session,
     )
 
     for thread_id, posts in threads_nums_2_posts.items():
@@ -476,6 +481,8 @@ def main():
     is_first_loop = True
     loop_i = 1
 
+    session = Session()
+
     while True:
         conn = get_connection()
         cursor = conn.cursor()
@@ -485,7 +492,7 @@ def main():
         for board in tqdm.tqdm(configs.boards, disable=configs.disable_tqdm):
             start = time.time()
 
-            catalog = get_catalog_from_api(board)
+            catalog = get_catalog_from_api(board, session=session)
             if not catalog:
                 configs.logger.info(f"Catalog returned {catalog}")
                 continue
@@ -499,7 +506,7 @@ def main():
                 continue
 
             # only get the new posts for inserting
-            thread_num_2_new_posts, thread_num_2_stats = get_new_posts_and_stats(cursor, board, thread_num_2_op, thread_id_2_catalog_last_replies)
+            thread_num_2_new_posts, thread_num_2_stats = get_new_posts_and_stats(cursor, board, thread_num_2_op, thread_id_2_catalog_last_replies, session=session)
 
             if not thread_num_2_new_posts:
                 configs.logger.info('No new posts found.')
@@ -509,17 +516,17 @@ def main():
                 write_new_posts_and_stats(cursor, board, thread_num_2_new_posts, thread_num_2_stats)
 
             if configs.boards[board].get('dl_full_media_op'):
-                download_thread_media_for_op(board, thread_num_2_op, MediaType.full_media)
+                download_thread_media_for_op(board, thread_num_2_op, MediaType.full_media, session=session)
 
             if configs.boards[board].get('dl_full_media'):
-                download_thread_media_for_new_posts(board, thread_num_2_new_posts, thread_num_2_op, MediaType.full_media)
+                download_thread_media_for_new_posts(board, thread_num_2_new_posts, thread_num_2_op, MediaType.full_media, session=session)
 
             # only dl thumbs if we are not instructed to generate them with Convert or FFMPEG
             if configs.boards[board].get('dl_thumbs_op') and not (configs.make_thumbnails and configs.boards[board].get('dl_full_media_op') and configs.boards[board].get('dl_full_media')):
-                download_thread_media_for_op(board, thread_num_2_op, MediaType.thumbnail)
+                download_thread_media_for_op(board, thread_num_2_op, MediaType.thumbnail, session=session)
 
             if configs.boards[board].get('dl_thumbs') and not (configs.make_thumbnails and configs.boards[board].get('dl_full_media_op') and configs.boards[board].get('dl_full_media')):
-                download_thread_media_for_new_posts(board, thread_num_2_new_posts, thread_num_2_op, MediaType.thumbnail)
+                download_thread_media_for_new_posts(board, thread_num_2_new_posts, thread_num_2_op, MediaType.thumbnail, session=session)
 
             times[board] = round((time.time() - start) / 60, 2) # minutes
 
@@ -528,7 +535,7 @@ def main():
         cursor.close()
         conn.close()
 
-        configs.logger.info(f"Loop #{loop_i} Completed")
+        configs.logger.info(f"\nLoop #{loop_i} Completed")
         configs.logger.info("Duration for each board:")
 
         for board, duration in times.items():
@@ -539,6 +546,9 @@ def main():
         configs.logger.info(f"Doing loop cooldown sleep for {configs.loop_cooldown_sec}s")
 
         write_json(fpath_d_last_modified, d_last_modified)
+
+        if configs.loop_cooldown_sec >= 15.0:
+            session.close()
 
         loop_i += 1
         time.sleep(configs.loop_cooldown_sec)

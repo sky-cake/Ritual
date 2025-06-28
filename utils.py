@@ -7,7 +7,7 @@ import time
 from collections import OrderedDict
 from logging.handlers import RotatingFileHandler
 
-import requests
+from requests import Session, get as requests_get
 
 
 def test_deps(logger: logging.Logger):
@@ -61,9 +61,15 @@ def sleep(t: int, add_random: bool=False):
     time.sleep(t)
 
 
-def fetch_json(url, headers=None, request_cooldown_sec: float=None, add_random: bool=False) -> dict:
+def log_warning(logger: logging.Logger, message: str):
+    if logger:
+        logger.warning(message)
+    print(f'Warning: {message}')
+
+
+def fetch_json(url, headers=None, request_cooldown_sec: float=None, add_random: bool=False, session: Session=None) -> dict:
     try:
-        resp = requests.get(url, headers=headers)
+        resp = session.get(url, headers=headers) if session else requests_get(url, headers=headers)
         if request_cooldown_sec:
             sleep(request_cooldown_sec, add_random=add_random)
 
@@ -73,13 +79,7 @@ def fetch_json(url, headers=None, request_cooldown_sec: float=None, add_random: 
         sleep(7.5)
 
 
-def log_warning(logger: logging.Logger, message: str):
-    if logger:
-        logger.warning(message)
-    print(f'Warning: {message}')
-
-
-def download_file(url: str, filepath: str, video_cooldown_sec: float=3.2, image_cooldown_sec: float=2.2, add_random: bool=False, headers: dict=None, logger: logging.Logger=None):
+def download_file(url: str, filepath: str, video_cooldown_sec: float=3.2, image_cooldown_sec: float=2.2, add_random: bool=False, headers: dict=None, logger: logging.Logger=None, session: Session=None):
     if is_video_path(filepath):
         ts = [video_cooldown_sec, 4.0, 6.0, 10.0]
     elif is_image_path(filepath):
@@ -88,16 +88,16 @@ def download_file(url: str, filepath: str, video_cooldown_sec: float=3.2, image_
         raise ValueError(filepath)
 
     for i, t in enumerate(ts):
-        resp = requests.get(url, headers=headers)
+        resp = session.get(url, headers=headers) if session else requests_get(url, headers=headers)
         if i > 0:
             video_cooldown_sec += 1.0
             image_cooldown_sec += 1.0
-            log_warning(f'Incremented 1 second to cooldowns, new cooldowns are: {video_cooldown_sec=} {image_cooldown_sec=}')
+            log_warning(logger, f'Incremented 1 second to cooldowns, new cooldowns are: {video_cooldown_sec=} {image_cooldown_sec=}')
 
         sleep(t, add_random=add_random)
 
         if resp.status_code != 200:
-            log_warning(f'{url=} {resp.status_code=}')
+            log_warning(logger, f'{url=} {resp.status_code=}')
             return
 
         if resp.status_code == 200 and resp.content:
@@ -105,9 +105,9 @@ def download_file(url: str, filepath: str, video_cooldown_sec: float=3.2, image_
                 f.write(resp.content)
             return True
         
-        log_warning(f'No content {url=} {filepath=} {resp.content=}')
+        log_warning(logger, f'No content {url=} {filepath=} {resp.content=}')
 
-    log_warning(f'Max retries exceeded {url=} {filepath=}')
+    log_warning(logger, f'Max retries exceeded {url=} {filepath=}')
 
 
 def is_video_path(path: str) -> bool:
