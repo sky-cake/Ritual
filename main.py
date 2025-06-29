@@ -155,25 +155,34 @@ def filter_catalog(board: str, catalog: dict, d_last_modified: dict, is_first_lo
     return thread_id_2_thread
 
 
-def get_thread_nums_2_post_ids_from_db(cursor: Cursor, board: str, thread_ids: list[int]) -> tuple[dict[int, set[int]]]:
+def get_thread_nums_2_post_ids_from_db(cursor: Cursor, board: str, thread_ids: list[int]) -> tuple[dict, dict, dict]:
     if not thread_ids:
-        return ({}, {})
+        return {}, {}, {}
 
     placeholders = ','.join(['?'] * len(thread_ids))
-    sql = f"""select thread_num, num, deleted from `{board}` where thread_num in ({placeholders});"""
+    sql = f"""select thread_num, num, deleted, media_orig from `{board}` where thread_num in ({placeholders});"""
     cursor.execute(sql, thread_ids)
-    results = cursor.fetchall()
+    posts = cursor.fetchall()
 
     d_all = defaultdict(set)
     d_not_deleted = defaultdict(set)
+    d_not_deleted_media = defaultdict(list)
 
-    for r in results:
-        d_all[r['thread_num']].add(r['num'])
+    for post in posts:
+        thread_num = post['thread_num']
+        d_all[thread_num].add(post['num'])
 
-        if not r['deleted']:
-            d_not_deleted[r['thread_num']].add(r['num'])
+        if not post['deleted']:
+            d_not_deleted[thread_num].add(post['num'])
 
-    return d_all, d_not_deleted
+            if post.get('media_orig'):
+                post['tim'], post['ext'] = post['media_orig'].split('.')
+                post['ext'] = '.' + post['ext']
+
+                # use API key names
+                d_not_deleted_media[thread_num].append({'no': post['num'], 'tim': post['tim'], 'ext': post['ext']})
+
+    return d_all, d_not_deleted, d_not_deleted_media
 
 
 def set_posts_deleted(cursor: Cursor, board: str, post_ids: list[int]) -> None:
@@ -302,12 +311,10 @@ def match_sub_and_com(post_op: dict, pattern: str):
 
 
 def download_thread_media_for_post(board: str, thread_op_post: dict, post: dict, media_type: MediaType, session: Session=None):
-    assert post['no']
+    """`post` only required `tim` and `ext` keys."""
     if post_has_file(post):
-        tim = post.get('tim') if post.get('tim') else time.time()
-        ext = post.get('ext')
-        assert tim
-        assert ext
+        tim = post['tim']
+        ext = post['ext']
 
         if media_type == MediaType.thumbnail:
             board_thumb_pattern = configs.boards[board].get('dl_thumbs')
@@ -358,10 +365,10 @@ def download_thread_media_for_op(board: str, thread_num_2_op: dict[int, dict], m
         download_thread_media_for_post(board, op_post, op_post, media_type, session=session)
 
 
-def download_thread_media_for_new_posts(board: str, thread_num_2_new_posts: dict[int, dict], thread_num_2_op: dict[int, dict], media_type: MediaType, session: Session=None):
-    for thread_num, new_posts in thread_num_2_new_posts.items():
+def download_thread_media_for_posts(board: str, thread_num_2_posts: dict[int, dict], thread_num_2_op: dict[int, dict], media_type: MediaType, session: Session=None):
+    for thread_num, posts in thread_num_2_posts.items():
         thread_op_post = thread_num_2_op[thread_num]
-        for post in new_posts:
+        for post in posts:
             download_thread_media_for_post(board, thread_op_post, post, media_type, session=session)
 
 
@@ -385,19 +392,23 @@ def create_non_existing_tables():
     conn.close()
 
 
-def get_new_posts_and_stats(cursor, board, thread_num_2_op, thread_id_2_catalog_last_replies, session: Session=None) -> tuple[dict, dict]:
+def get_new_posts_map_and_latest_stats_map_and_not_deleted_media_posts(cursor, board, thread_num_2_op, thread_id_2_catalog_last_replies, session: Session=None) -> tuple[dict, dict, dict]:
     """
     In previous versions of Ritual, we would just grab entire threads, as toss them at sqlite like it wasn't our problem.
     Now, we carefully try to select posts we have not yet archived, and gently hand them to sqlite.
+
+    - existing posts: already archived posts, marks as not deleted
+    - new posts: posts we just fetched from the api
+    - stats: the latest stats for a thread, fetched from the api
     """
     # query the database to see which of threads we already have, if any
     ti = time.perf_counter()
     thread_ids = list(thread_num_2_op.keys())
     if not thread_ids:
-        return {}, {}
+        return {}, {}, {}
 
-    thread_num_2_prev_post_nums_all, thread_num_2_prev_post_nums_not_deleted = get_thread_nums_2_post_ids_from_db(cursor, board, thread_ids)
-    
+    thread_num_2_prev_post_nums_all, thread_num_2_prev_post_nums_not_deleted, thread_num_2_prev_posts_not_deleted_media = get_thread_nums_2_post_ids_from_db(cursor, board, thread_ids)
+
     tf = time.perf_counter()
     configs.logger.info(f'[{board}] Queried database for {len(thread_ids)} threads in {tf-ti:.4f}s')
 
@@ -451,7 +462,7 @@ def get_new_posts_and_stats(cursor, board, thread_num_2_op, thread_id_2_catalog_
         if new_posts_ids:
             thread_num_2_new_posts[thread_id] = [p for p in posts if p['no'] in new_posts_ids]
 
-    return thread_num_2_new_posts, thread_num_2_stats
+    return thread_num_2_new_posts, thread_num_2_stats, thread_num_2_prev_posts_not_deleted_media
 
 
 def write_new_posts_and_stats(cursor: Cursor, board: str, thread_num_2_new_posts: dict[int, dict], thread_num_2_stats: dict[int, dict]):
@@ -464,6 +475,41 @@ def write_new_posts_and_stats(cursor: Cursor, board: str, thread_num_2_new_posts
         sleep(0.25)
         upsert_thread_num_2_posts(cursor, board, thread_num_2_new_posts, thread_num_2_stats)
         cursor.connection.commit()
+
+
+def get_thread_nums_2_media_posts(board: str, thread_num_2_new_posts: dict, thread_num_2_prev_posts_not_deleted_media: dict) -> dict:
+    if not configs.ensure_all_files_downloaded:
+        # download media for the posts we just fetched
+        return thread_num_2_new_posts
+    
+    if not configs.boards[board].get('dl_full_media') and not configs.boards[board].get('dl_thumbs'):
+        # We don't need to download any media for posts.
+        # OP-only specified with dl_full_media_op and dl_thumbs_op are handled separately.
+        return {}
+
+    # Download media for the posts we just fetched,
+    # but also add already archived posts-with-media, not marked as deleted, for possible downloading.
+    thread_nums_2_media_posts = defaultdict(list)
+    thread_nums_2_media_posts |= thread_num_2_new_posts
+    _thread_num_post_num_pairs = set()
+    for thread_id, posts in thread_num_2_new_posts.items():
+        for post in posts:
+            if post_has_file(post):
+                _thread_num_post_num_pairs.add((thread_id, post['no']))
+
+    media_count_i = len(_thread_num_post_num_pairs)
+    configs.logger.info(f'[{board}] Media count from new posts: {media_count_i}. Post filters not applied yet.')
+
+    for thread_id, posts in thread_num_2_prev_posts_not_deleted_media.items():
+        for post in posts:
+            if post_has_file(post) and ((thread_id, post['no']) not in _thread_num_post_num_pairs):
+                thread_nums_2_media_posts[thread_id].append(post)
+                _thread_num_post_num_pairs.add((thread_id, post['no']))
+
+    media_count_f = len(_thread_num_post_num_pairs)
+    configs.logger.info(f'[{board}] Media count from existing posts: {media_count_f - media_count_i}. Post filters not applied yet.')
+
+    return thread_nums_2_media_posts
 
 
 def main():
@@ -505,28 +551,33 @@ def main():
             if not thread_num_2_op:
                 continue
 
-            # only get the new posts for inserting
-            thread_num_2_new_posts, thread_num_2_stats = get_new_posts_and_stats(cursor, board, thread_num_2_op, thread_id_2_catalog_last_replies, session=session)
 
-            if not thread_num_2_new_posts:
-                configs.logger.info('No new posts found.')
+            thread_num_2_new_posts, thread_num_2_stats, thread_num_2_prev_posts_not_deleted_media = get_new_posts_map_and_latest_stats_map_and_not_deleted_media_posts(cursor, board, thread_num_2_op, thread_id_2_catalog_last_replies, session=session)
+
+            # write the new records to the database
+            if thread_num_2_new_posts and configs.boards[board].get('thread_text'):
+                write_new_posts_and_stats(cursor, board, thread_num_2_new_posts, thread_num_2_stats)
+
+
+            if not thread_num_2_new_posts and not configs.ensure_all_files_downloaded:
+                configs.logger.info(f'[{board}] No new posts found.')
                 continue
 
-            if configs.boards[board].get('thread_text'):
-                write_new_posts_and_stats(cursor, board, thread_num_2_new_posts, thread_num_2_stats)
+
+            thread_nums_2_media_posts = get_thread_nums_2_media_posts(board, thread_num_2_new_posts, thread_num_2_prev_posts_not_deleted_media)
 
             if configs.boards[board].get('dl_full_media_op'):
                 download_thread_media_for_op(board, thread_num_2_op, MediaType.full_media, session=session)
 
             if configs.boards[board].get('dl_full_media'):
-                download_thread_media_for_new_posts(board, thread_num_2_new_posts, thread_num_2_op, MediaType.full_media, session=session)
+                download_thread_media_for_posts(board, thread_nums_2_media_posts, thread_num_2_op, MediaType.full_media, session=session)
 
             # only dl thumbs if we are not instructed to generate them with Convert or FFMPEG
             if configs.boards[board].get('dl_thumbs_op') and not (configs.make_thumbnails and configs.boards[board].get('dl_full_media_op') and configs.boards[board].get('dl_full_media')):
                 download_thread_media_for_op(board, thread_num_2_op, MediaType.thumbnail, session=session)
 
             if configs.boards[board].get('dl_thumbs') and not (configs.make_thumbnails and configs.boards[board].get('dl_full_media_op') and configs.boards[board].get('dl_full_media')):
-                download_thread_media_for_new_posts(board, thread_num_2_new_posts, thread_num_2_op, MediaType.thumbnail, session=session)
+                download_thread_media_for_posts(board, thread_nums_2_media_posts, thread_num_2_op, MediaType.thumbnail, session=session)
 
             times[board] = round((time.time() - start) / 60, 2) # minutes
 

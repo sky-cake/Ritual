@@ -16,6 +16,14 @@ media_save_path = make_path('media')
 database = make_path('ritual.db') # sqlite
 
 
+# If new posts are added to the database and Ritual is interrupted before their media is downloaded,
+# it's likely that some media will be missed when you restart Ritual, resulting in gaps of posts with no media.
+# Setting this to True ensures that all media (according to the per-board download configs below) is fetched
+# by verifying each post's media file on disk.
+# This incurs a minimal CPU cost (os.path.isfile() is cheap), so the default is True.
+ensure_all_files_downloaded = True
+
+
 headers = None
 # headers = {'User-Agent', ''}
 

@@ -112,7 +112,7 @@ def convert_to_asagi_comment(a):
 
 
 def post_has_file(post: dict) -> bool:
-    return post.get('tim') and post.get('ext') and post.get('md5')
+    return post.get('tim') and post.get('ext')
 
 
 def get_fs_filename_full_media(post: dict) -> str:
@@ -141,9 +141,11 @@ def create_thumbnail(post: dict, full_path: str, thumb_path: str, logger=None):
         create_thumbnail_from_image(full_path, thumb_path, logger=logger)
         return
 
+
+digits = '0123456789'
 def get_filepath(media_save_path: str, board: str, media_type: MediaType, filename: str) -> str:
     tim = filename.split('.')[0]
-    assert len(tim) >= 6 and tim[:6].isdigit()
+    assert len(tim) >= 6 and all(t in digits for t in tim[:6])
     dir_path = make_path(media_save_path, board, media_type, filename[:4], filename[4:6])
     os.makedirs(dir_path, mode=775, exist_ok=True)
     os.chmod(dir_path, 0o775)
