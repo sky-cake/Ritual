@@ -36,7 +36,7 @@ def setup_logger(logger_name, log_file=False, stdout=True, file_rotate_size=1 * 
         file_handler = RotatingFileHandler(log_file, maxBytes=file_rotate_size, backupCount=max_files)
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
-    
+
     return logger
 
 
@@ -104,7 +104,7 @@ def download_file(url: str, filepath: str, video_cooldown_sec: float=3.2, image_
             with open(filepath, 'wb') as f:
                 f.write(resp.content)
             return True
-        
+    
         log_warning(logger, f'No content {url=} {filepath=} {resp.content=}')
 
     log_warning(logger, f'Max retries exceeded {url=} {filepath=}')

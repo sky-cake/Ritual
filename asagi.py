@@ -45,16 +45,16 @@ def convert_to_asagi_comment(a):
             "[\\1:lit]",
             a
         )
-    
+
     # abbr, exif, oekaki
     if "\"abbr" in a: a = re.sub("((<br>){0-2})?<span class=\"abbr\">(.*?)</span>", "", a)
     if "\"exif" in a: a = re.sub("((<br>)+)?<table class=\"exif\"(.*?)</table>", "", a)
     if ">Oek" in a: a = re.sub("((<br>)+)?<small><b>Oekaki(.*?)</small>", "", a)
-    
+
     # banned
     if "<stro" in a:
         a = re.sub("<strong style=\"color: ?red;?\">(.*?)</strong>", "[banned]\\1[/banned]", a)
-    
+
     # fortune
     if "\"fortu" in a:
         a = re.sub(
@@ -62,7 +62,7 @@ def convert_to_asagi_comment(a):
             "\n\n[fortune color=\"\\1\"]\\2[/fortune]",
             a
         )
-    
+
     # dice roll
     if "<b>" in a:
         a = re.sub(
@@ -70,44 +70,45 @@ def convert_to_asagi_comment(a):
             "[b]\\1[/b]",
             a
         )
-    
+
     # code tags
     if "<pre" in a:
         a = re.sub("<pre[^>]*>", "[code]", a)
         a = a.replace("</pre>", "[/code]")
-    
+
     # math tags
     if "\"math" in a:
         a = re.sub("<span class=\"math\">(.*?)</span>", "[math]\\1[/math]", a)
         a = re.sub("<div class=\"math\">(.*?)</div>", "[eqn]\\1[/eqn]", a)
-    
+
     # sjis tags
     if "\"sjis" in a:
         a = re.sub("<span class=\"sjis\">(.*?)</span>", "[shiftjis]\\1[/shiftjis]", a) # use [sjis] maybe?
-    
+
     # quotes & deadlinks
     if "<span" in a:
         a = re.sub("<span class=\"quote\">(.*?)</span>", "\\1", a)
-        
+    
         # hacky fix for deadlinks inside quotes
         for idx in range(3):
             if not "deadli" in a: break
             a = re.sub("<span class=\"(?:[^\"]*)?deadlink\">(.*?)</span>", "\\1", a)
-    
+
     # other links
     if "<a" in a:
         a = re.sub("<a(?:[^>]*)>(.*?)</a>", "\\1", a)
-    
+
     # spoilers
     a = a.replace("<s>", "[spoiler]")
     a = a.replace("</s>", "[/spoiler]")
-    
+
     # newlines
     a = a.replace("<br>", "\n")
+    a = a.replace("<br/>", "\n")
     a = a.replace("<wbr>", "")
-    
+
     a = html.unescape(a)
-    
+
     return a
 
 
@@ -136,7 +137,7 @@ def create_thumbnail(post: dict, full_path: str, thumb_path: str, logger=None):
     if is_post_media_file_video(post):
         create_thumbnail_from_video(full_path, thumb_path, logger=logger)
         return
-    
+
     if is_post_media_file_image(post):
         create_thumbnail_from_image(full_path, thumb_path, logger=logger)
         return

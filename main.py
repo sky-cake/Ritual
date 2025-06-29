@@ -70,7 +70,7 @@ def should_archive(board: str, subject: str, comment: str, whitelist: str =None,
         if comment:
             if re.fullmatch(blacklist_post_filter, comment, re.IGNORECASE) is not None:
                 return False
-    
+
     whitelist_post_filter = configs.boards[board].get('whitelist') if whitelist is None else whitelist
     if whitelist_post_filter:
         if subject:
@@ -80,9 +80,9 @@ def should_archive(board: str, subject: str, comment: str, whitelist: str =None,
         if comment:
             if re.fullmatch(whitelist_post_filter, comment, re.IGNORECASE) is not None:
                 return True
-            
+        
         return False
-    
+
     return True
 
 
@@ -303,10 +303,10 @@ def match_sub_and_com(post_op: dict, pattern: str):
 
     if sub and re.fullmatch(pattern, sub, re.IGNORECASE):
         return True
-    
+
     if com and re.fullmatch(pattern, com, re.IGNORECASE):
         return True
-    
+
     return False
 
 
@@ -481,7 +481,7 @@ def get_thread_nums_2_media_posts(board: str, thread_num_2_new_posts: dict, thre
     if not configs.ensure_all_files_downloaded:
         # download media for the posts we just fetched
         return thread_num_2_new_posts
-    
+
     if not configs.boards[board].get('dl_full_media') and not configs.boards[board].get('dl_thumbs'):
         # We don't need to download any media for posts.
         # OP-only specified with dl_full_media_op and dl_thumbs_op are handled separately.
