@@ -517,17 +517,16 @@ def get_cached_d_last_modified(fpath_d_last_modified: str):
     d_last_modified = read_json(fpath_d_last_modified)
 
     if not d_last_modified:
-        d_last_modified = dict()
-    else:
-        # convert keys to ints
-        d_last_modified = {
-            k_board_name: {
-                int(k_thread_num): v_last_modified
-                for k_thread_num, v_last_modified in thread_num_2_last_modified.items()
-            }
-            for k_board_name, thread_num_2_last_modified in d_last_modified.items()
+        return dict()
+    
+    # convert keys to ints
+    return {
+        k_board_name: {
+            int(k_thread_num): v_last_modified
+            for k_thread_num, v_last_modified in thread_num_2_last_modified.items()
         }
-    return d_last_modified
+        for k_board_name, thread_num_2_last_modified in d_last_modified.items()
+    }
 
 
 def main():
