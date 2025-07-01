@@ -512,17 +512,32 @@ def get_thread_nums_2_media_posts(board: str, thread_num_2_new_posts: dict, thre
     return thread_nums_2_media_posts
 
 
+def get_cached_d_last_modified(fpath_d_last_modified: str):
+    """{g: {123: 1717755968, 124: 1717755999}, ck: {456: 1717755968}, ...}"""
+    d_last_modified = read_json(fpath_d_last_modified)
+
+    if not d_last_modified:
+        d_last_modified = dict()
+    else:
+        # convert keys to ints
+        d_last_modified = {
+            k_board_name: {
+                int(k_thread_num): v_last_modified
+                for k_thread_num, v_last_modified in thread_num_2_last_modified.items()
+            }
+            for k_board_name, thread_num_2_last_modified in d_last_modified.items()
+        }
+    return d_last_modified
+
+
 def main():
     if configs.make_thumbnails:
         test_deps(configs.logger)
 
     create_non_existing_tables()
 
-    # {g: {123: 1717755968, 124: 1717755999}}
-    fpath_d_last_modified = make_path('cache', 'd_last_modified')
-    d_last_modified = read_json(fpath_d_last_modified)
-    if not d_last_modified:
-        d_last_modified = dict()
+    fpath_d_last_modified = make_path('cache', 'd_last_modified.json')
+    d_last_modified = get_cached_d_last_modified(fpath_d_last_modified)
 
     is_first_loop = True
     loop_i = 1
