@@ -23,6 +23,8 @@ database = make_path('ritual.db') # sqlite
 # This incurs a minimal CPU cost (os.path.isfile() is cheap), so the default is True.
 ensure_all_files_downloaded = True
 
+# Query the database for the md5 hash returned from the chan API. If found, do not download the file
+download_duplicate_files = True
 
 headers = None
 # headers = {'User-Agent', ''}

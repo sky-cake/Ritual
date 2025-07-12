@@ -1,3 +1,5 @@
+-- every statement here should be idempotent (use `if not exists`)
+
 CREATE TABLE IF NOT EXISTS `%%BOARD%%` (
     doc_id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
     media_id INTEGER NOT NULL,
@@ -101,7 +103,5 @@ CREATE INDEX IF NOT EXISTS idx_%%BOARD%%_media_id ON `%%BOARD%%` (media_id);
 CREATE INDEX IF NOT EXISTS idx_%%BOARD%%_thread_num ON `%%BOARD%%` (thread_num);
 CREATE INDEX IF NOT EXISTS idx_%%BOARD%%_timestamp ON `%%BOARD%%` (timestamp);
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_%%BOARD%%_num ON `%%BOARD%%_images` (media_id);
-CREATE INDEX IF NOT EXISTS idx_%%BOARD%%_num ON `%%BOARD%%_images` (media_hash);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_%%BOARD%%_num ON `%%BOARD%%_threads` (thread_num);
+create unique index if not exists idx_%%BOARD%%_media_hash on `%%BOARD%%_images` (media_hash);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_%%BOARD%%_thread_num ON `%%BOARD%%_threads` (thread_num);
