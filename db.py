@@ -1,6 +1,16 @@
 import sqlite3
+from functools import lru_cache
 
 import configs
+
+
+@lru_cache()
+def get_placeholders_by_len(length, symbol='?'):
+    return ','.join([symbol] * length)
+
+
+def get_placeholders(l: list, symbol='?'):
+    return get_placeholders_by_len(len(l), symbol=symbol)
 
 
 def dict_factory(cursor, row):
