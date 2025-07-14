@@ -480,10 +480,10 @@ def get_thread_nums_2_media_posts(board: str, thread_num_2_new_posts: dict, thre
         # download media for the posts we just fetched
         return thread_num_2_new_posts
 
-    if not configs.boards[board].get('dl_full_media') and not configs.boards[board].get('dl_thumbs'):
-        # We don't need to download any media for posts.
-        # OP-only specified with dl_full_media_op and dl_thumbs_op are handled separately.
-        return {}
+    # if not configs.boards[board].get('dl_full_media') and not configs.boards[board].get('dl_thumbs'):
+    #     # We don't need to download any media for posts.
+    #     # OP-only specified with dl_full_media_op and dl_thumbs_op are handled separately.
+    #     return {}
 
     # Download media for the posts we just fetched,
     # but also add already archived posts-with-media, not marked as deleted, for possible downloading.
