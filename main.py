@@ -309,34 +309,44 @@ def match_sub_and_com(post_op: dict, pattern: str):
     return False
 
 
-def download_thread_media_for_post(board: str, thread_op_post: dict, post: dict, media_type: MediaType):
+def get_url_and_filename(board: str, post: dict, media_type: MediaType):
+    # TODO split out into 2 get()s
+
+    if media_type == MediaType.thumbnail:
+        url = configs.url_thumbnail.format(board=board, image_id=post['tim']) # ext is always .jpg
+        filename = get_fs_filename_thumbnail(post)
+
+    elif media_type == MediaType.full_media:
+        url = configs.url_full_media.format(board=board, image_id=post['tim'], ext=post['ext'])
+        filename = get_fs_filename_full_media(post)
+
+    else:
+        raise ValueError(media_type)
+    
+    return url, filename
+
+
+def download_thread_media_for_post(board: str, thread_op_post: dict, post: dict, media_type: MediaType, qualifier: str):
     """`post` only required `tim` and `ext` keys."""
     if not post_has_file(post):
         return
 
-    if media_type == MediaType.thumbnail:
-        board_thumb_pattern = configs.boards[board].get('dl_thumbs')
-        if isinstance(board_thumb_pattern, str) and not match_sub_and_com(thread_op_post, board_thumb_pattern):
-            return
+    # TODO create an enum
+    if qualifier not in ('dl_full_media', 'dl_full_media_op', 'dl_thumbs', 'dl_thumbs_op'):
+        raise ValueError(qualifier)
+    
+    qualifier_pattern = configs.boards[board].get(qualifier)
 
-        if configs.url_thumbnail is None:
-            configs.logger.info('Warning: this site does not support thumbnail downloads.')
+    # the config is-set, and config True test
+    if not qualifier_pattern:
+        return
 
-        url = configs.url_thumbnail.format(board=board, image_id=post['tim']) # ext is always .jpg
-        filename = get_fs_filename_thumbnail(post)
-        filepath = get_filepath(configs.media_save_path, board, MediaType.thumbnail.value, filename)
+    # the config regex test
+    if isinstance(qualifier_pattern, str) and not match_sub_and_com(thread_op_post, qualifier_pattern):
+        return
 
-    elif media_type == MediaType.full_media:
-        board_full_media_pattern = configs.boards[board].get('dl_full_media')
-        if isinstance(board_full_media_pattern, str) and not match_sub_and_com(thread_op_post, board_full_media_pattern):
-            return
-
-        url = configs.url_full_media.format(board=board, image_id=post['tim'], ext=post['ext'])
-        filename = get_fs_filename_full_media(post)
-        filepath = get_filepath(configs.media_save_path, board, MediaType.full_media.value, filename)
-
-    else:
-        raise ValueError(media_type)
+    url, filename = get_url_and_filename(board, post, media_type)
+    filepath = get_filepath(configs.media_save_path, board, media_type.value, filename)
 
     # os.path.isfile is cheap, no need for a cache
     if os.path.isfile(filepath):
@@ -352,6 +362,7 @@ def download_thread_media_for_post(board: str, thread_op_post: dict, post: dict,
         logger=configs.logger,
         session=configs._session,
     )
+
     if not result:
         return
 
@@ -362,16 +373,16 @@ def download_thread_media_for_post(board: str, thread_op_post: dict, post: dict,
         create_thumbnail(post, filepath, thumb_path, logger=configs.logger)
 
 
-def download_thread_media_for_op(board: str, thread_num_2_op: dict[int, dict], media_type: MediaType):
+def download_thread_media_for_op(board: str, thread_num_2_op: dict[int, dict], media_type: MediaType, qualifier: str):
     for thread_num, op_post in thread_num_2_op.items():
-        download_thread_media_for_post(board, op_post, op_post, media_type)
+        download_thread_media_for_post(board, op_post, op_post, media_type, qualifier)
 
 
-def download_thread_media_for_posts(board: str, thread_num_2_posts: dict[int, dict], thread_num_2_op: dict[int, dict], media_type: MediaType):
+def download_thread_media_for_posts(board: str, thread_num_2_posts: dict[int, dict], thread_num_2_op: dict[int, dict], media_type: MediaType, qualifier: str):
     for thread_num, posts in thread_num_2_posts.items():
         thread_op_post = thread_num_2_op[thread_num]
         for post in posts:
-            download_thread_media_for_post(board, thread_op_post, post, media_type)
+            download_thread_media_for_post(board, thread_op_post, post, media_type, qualifier)
 
 
 def create_non_existing_tables():
@@ -579,17 +590,20 @@ def main():
             thread_nums_2_media_posts = get_thread_nums_2_media_posts(board, thread_num_2_new_posts, thread_num_2_prev_posts_not_deleted_media)
 
             if configs.boards[board].get('dl_full_media_op'):
-                download_thread_media_for_op(board, thread_num_2_op, MediaType.full_media)
+                download_thread_media_for_op(board, thread_num_2_op, MediaType.full_media, 'dl_full_media_op')
 
             if configs.boards[board].get('dl_full_media'):
-                download_thread_media_for_posts(board, thread_nums_2_media_posts, thread_num_2_op, MediaType.full_media)
+                download_thread_media_for_posts(board, thread_nums_2_media_posts, thread_num_2_op, MediaType.full_media, 'dl_full_media')
 
-            # only dl thumbs if we are not instructed to generate them with Convert or FFMPEG
-            if configs.boards[board].get('dl_thumbs_op') and not (configs.make_thumbnails and configs.boards[board].get('dl_full_media_op') and configs.boards[board].get('dl_full_media')):
-                download_thread_media_for_op(board, thread_num_2_op, MediaType.thumbnail)
+            # "if we're not making OP thumbs [with Convert or FFMPEG] from OP full media"
+            if not (configs.make_thumbnails and configs.boards[board].get('dl_full_media_op')):
+                if configs.boards[board].get('dl_thumbs_op'):
+                    download_thread_media_for_op(board, thread_num_2_op, MediaType.thumbnail, 'dl_thumbs_op')
 
-            if configs.boards[board].get('dl_thumbs') and not (configs.make_thumbnails and configs.boards[board].get('dl_full_media_op') and configs.boards[board].get('dl_full_media')):
-                download_thread_media_for_posts(board, thread_nums_2_media_posts, thread_num_2_op, MediaType.thumbnail)
+            # "if we're not making thumbs [with Convert or FFMPEG] from full media"
+            if not (configs.make_thumbnails and configs.boards[board].get('dl_full_media')):
+                if configs.boards[board].get('dl_thumbs'):
+                    download_thread_media_for_posts(board, thread_nums_2_media_posts, thread_num_2_op, MediaType.thumbnail, 'dl_thumbs')
 
             times[board] = round((time.time() - start) / 60, 2) # minutes
 
