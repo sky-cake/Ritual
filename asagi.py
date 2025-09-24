@@ -148,9 +148,9 @@ def get_filepath(media_save_path: str, board: str, media_type: MediaType, filena
     """Will create filepath directories if they don't exist."""
     tim = filename.split('.')[0]
     assert len(tim) >= 6 and all(t in digits for t in tim[:6])
-    dir_path = make_path(media_save_path, board, media_type, filename[:4], filename[4:6])
+    dir_path = make_path(media_save_path, board, media_type.value, filename[:4], filename[4:6])
     os.makedirs(dir_path, mode=775, exist_ok=True)
-    # os.chmod(dir_path, 0o775)
+    os.chmod(dir_path, 0o775)
     return os.path.join(dir_path, filename)
 
 
@@ -166,7 +166,7 @@ def get_thread_id_2_last_replies(catalog):
 def get_d_board(post: dict, unescape_data_b4_db_write: bool=True):
     return {
         # 'doc_id': post.get('doc_id'), # autoincremented
-        # 'media_id': media_id or 0, inserted/updated by triggers
+        'media_id': 0, # inserted/updated by triggers
         'poster_ip': post.get('poster_ip', '0'),
         'num': post.get('no', 0),
         'subnum': post.get('subnum', 0),
