@@ -145,11 +145,12 @@ def create_thumbnail(post: dict, full_path: str, thumb_path: str, logger=None):
 
 digits = '0123456789'
 def get_filepath(media_save_path: str, board: str, media_type: MediaType, filename: str) -> str:
+    """Will create filepath directories if they don't exist."""
     tim = filename.split('.')[0]
     assert len(tim) >= 6 and all(t in digits for t in tim[:6])
     dir_path = make_path(media_save_path, board, media_type, filename[:4], filename[4:6])
     os.makedirs(dir_path, mode=775, exist_ok=True)
-    os.chmod(dir_path, 0o775)
+    # os.chmod(dir_path, 0o775)
     return os.path.join(dir_path, filename)
 
 
@@ -162,10 +163,10 @@ def get_thread_id_2_last_replies(catalog):
     return thread_id_2_last_replies
 
 
-def get_d_board(post: dict, media_id: int = None, unescape_data_b4_db_write: bool=True):
+def get_d_board(post: dict, unescape_data_b4_db_write: bool=True):
     return {
         # 'doc_id': post.get('doc_id'), # autoincremented
-        'media_id': media_id or 0,
+        # 'media_id': media_id or 0, inserted/updated by triggers
         'poster_ip': post.get('poster_ip', '0'),
         'num': post.get('no', 0),
         'subnum': post.get('subnum', 0),
@@ -196,16 +197,4 @@ def get_d_board(post: dict, media_id: int = None, unescape_data_b4_db_write: boo
         'poster_hash': post.get('id'),
         'poster_country': post.get('country_name'),
         'exif': json.dumps({'uniqueIps': int(post.get('unique_ips'))}) if post.get('unique_ips') else None,
-    }
-
-
-def get_d_image(post: dict, is_op: bool):
-    return {
-        # 'media_id': post.get('media_id'), # autoincremented
-        'media_hash': post.get('md5'),
-        'media': get_fs_filename_full_media(post),
-        'preview_op': get_fs_filename_thumbnail(post) if is_op else None,
-        'preview_reply': get_fs_filename_thumbnail(post) if not is_op else None,
-        'total': 0,
-        'banned': 0,
     }
