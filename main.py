@@ -304,7 +304,7 @@ def get_url_and_filename(board: str, post: dict, media_type: MediaType):
     return url, filename
 
 
-def download_thread_media_for_post(board: str, thread_op_post: dict, post: dict, media_type: MediaType, qualifier: str):
+def download_thread_media_for_post(board: str, thread_op_post: dict, post: dict, nums_with_eligible_files: set[int], media_type: MediaType, qualifier: str):
     """`post` only required `tim` and `ext` keys."""
     if not post_has_file(post):
         return
@@ -317,6 +317,9 @@ def download_thread_media_for_post(board: str, thread_op_post: dict, post: dict,
 
     # the config is-set, and config True test
     if not qualifier_pattern:
+        return
+
+    if post['no'] not in nums_with_eligible_files:
         return
 
     # the config regex test
@@ -351,21 +354,19 @@ def download_thread_media_for_post(board: str, thread_op_post: dict, post: dict,
         create_thumbnail(post, filepath, thumb_path, logger=configs.logger)
 
 
-def download_thread_media_for_op(board: str, thread_num_2_op: dict[int, dict], media_type: MediaType, qualifier: str):
-    for thread_num, op_post in thread_num_2_op.items():
-        download_thread_media_for_post(board, op_post, op_post, media_type, qualifier)
-
-
-def download_thread_media_for_posts(board: str, thread_num_2_posts: dict[int, dict], thread_num_2_op: dict[int, dict], media_type: MediaType, qualifier: str):
+def download_thread_media_for_posts(board: str, thread_num_2_posts: dict[int, dict], thread_num_2_op: dict[int, dict], nums_with_eligible_files: set[int], media_type: MediaType, qualifier: str):
     for thread_num, p in thread_num_2_posts.items():
         thread_op_post = thread_num_2_op[thread_num]
-    
+
         if isinstance(p, list):
-            for post in p:
-                download_thread_media_for_post(board, thread_op_post, post, media_type, qualifier)
+            for p_i in p:
+                download_thread_media_for_post(board, thread_op_post, p_i, nums_with_eligible_files, media_type, qualifier)
 
         elif isinstance(p, dict):
-            download_thread_media_for_post(board, thread_op_post, p, media_type, qualifier)
+            download_thread_media_for_post(board, thread_op_post, p, nums_with_eligible_files, media_type, qualifier)
+
+        else:
+            raise TypeError(p)
 
 
 def create_non_existing_tables():
@@ -508,16 +509,39 @@ def get_cached_d_last_modified(fpath_d_last_modified: str):
     }
 
 
-def remove_images_already_downloaded(board: str, thread_num_2_media_posts: dict) -> dict:
-    """
-    Each (board, media_hash, is_op) state gets at most 1 filesystem path.
-    This query helps get us that fs path, as well as avoid banned media hashes.
-    """
-    if not thread_num_2_media_posts:
-        return thread_num_2_media_posts
+def add_num_to_nums_routine(board: str, post: dict, hash_2_image_row: dict[str, dict], nums: set[int]):
+    if not (media_hash := post.get('md5')):
+        return
 
+    image_row = hash_2_image_row.get(media_hash, {})
+
+    # banned hash, skip it
+    if image_row['banned'] != 0:
+        return
+
+    # don't have this hash, mark for possible downloading
+    if media_hash not in hash_2_image_row:
+        nums.add(post['no'])
+        return
+
+    # found hash in the db, but no file in the fs, mark for possible downloading
+    full_filename = get_fs_filename_full_media(post)
+    full_path = get_filepath(configs.media_save_path, board, MediaType.full_media, full_filename)
+    if not os.path.isfile(full_path):
+        nums.add(post['no'])
+        return
+
+    # found hash in the db, but no file in the fs, mark for possible downloading
+    thumb_filename = get_fs_filename_thumbnail(post)
+    thumb_path = get_filepath(configs.media_save_path, board, MediaType.thumbnail, thumb_filename)
+    if not os.path.isfile(thumb_path):
+        nums.add(post['no'])
+        return
+
+
+def get_image_hash_2_image_rows(board: str, num_2_posts: dict[int, list[dict] | dict]):
     media_hashes = set()
-    for p in thread_num_2_media_posts.values():
+    for p in num_2_posts.values():
         if isinstance(p, list):
             for post in p:
                 if media_hash := post.get('md5'):
@@ -525,7 +549,9 @@ def remove_images_already_downloaded(board: str, thread_num_2_media_posts: dict)
         elif isinstance(p, dict):
             if media_hash := p.get('md5'):
                 media_hashes.add(media_hash)
-    
+        else:
+            raise TypeError(p)
+
     media_hashes = tuple(media_hashes)
 
     sql_string = f'''
@@ -538,69 +564,30 @@ def remove_images_already_downloaded(board: str, thread_num_2_media_posts: dict)
     rows = configs._cursor.execute(sql_string, media_hashes).fetchall()
 
     hash_2_image_row = {row['media_hash']: row for row in rows}
+    return hash_2_image_row
 
-    d = dict()
-    for thread_num, post in thread_num_2_media_posts.items():
-        if isinstance(post, dict):
-            if not (media_hash := post.get('md5')):
-                continue
 
-            image_row = hash_2_image_row.get(media_hash, {})
+def get_nums_with_eligible_files(board: str, thread_num_2_posts: dict[int, list[dict] | dict]) -> set[int]:
+    """
+    Each (board, media_hash, is_op) state gets at most 1 filesystem path.
+    This query helps get us that fs path, as well as avoid banned media hashes.
+    """
+    nums = set()
 
-            # banned hash, skip it
-            if image_row['banned'] != 0:
-                continue
+    if not thread_num_2_posts:
+        return nums
 
-            # don't have this hash, mark for possible downloading
-            if media_hash not in hash_2_image_row:
-                d[thread_num] = post
-                continue
+    hash_2_image_row = get_image_hash_2_image_rows(board, thread_num_2_posts)
 
-            # found hash in the db, but no file in the fs, mark for possible downloading
-            full_filename = get_fs_filename_full_media(post)
-            full_path = get_filepath(configs.media_save_path, board, MediaType.full_media, full_filename)
-            if not os.path.isfile(full_path):
-                d[thread_num] = post
-                continue
+    for thread_num, p in thread_num_2_posts.items():
+        if isinstance(p, dict):
+            add_num_to_nums_routine(board, p, hash_2_image_row, nums)
 
-            # found hash in the db, but no file in the fs, mark for possible downloading
-            thumb_filename = get_fs_filename_thumbnail(post)
-            thumb_path = get_filepath(configs.media_save_path, board, MediaType.thumbnail, thumb_filename)
-            if not os.path.isfile(thumb_path):
-                d[thread_num] = post
-                continue
+        elif isinstance(p, list):
+            for p_i in p:
+                add_num_to_nums_routine(board, p_i, hash_2_image_row, nums)
 
-        elif isinstance(post, list):
-            for p in post:
-                if not (media_hash := p.get('md5')):
-                    continue
-
-                image_row = hash_2_image_row.get(media_hash, {})
-
-                # banned hash, skip it
-                if image_row['banned'] != 0:
-                    continue
-
-                # don't have this hash, mark for possible downloading
-                if media_hash not in hash_2_image_row:
-                    d[thread_num] = p
-                    continue
-
-                # found hash in the db, but no file in the fs, mark for possible downloading
-                full_filename = get_fs_filename_full_media(p)
-                full_path = get_filepath(configs.media_save_path, board, MediaType.full_media, full_filename)
-                if not os.path.isfile(full_path):
-                    d[thread_num] = p
-                    continue
-
-                # found hash in the db, but no file in the fs, mark for possible downloading
-                thumb_filename = get_fs_filename_thumbnail(p)
-                thumb_path = get_filepath(configs.media_save_path, board, MediaType.thumbnail, thumb_filename)
-                if not os.path.isfile(thumb_path):
-                    d[thread_num] = p
-                    continue
-
-    return d
+    return nums
 
 
 def main():
@@ -655,25 +642,26 @@ def main():
             thread_nums_2_media_posts = get_thread_nums_2_media_posts(board, thread_num_2_new_posts, thread_num_2_prev_posts_not_deleted_media)
 
 
-            thread_num_2_op           = remove_images_already_downloaded(board, thread_num_2_op)
-            thread_nums_2_media_posts = remove_images_already_downloaded(board, thread_nums_2_media_posts)
+            op_nums_with_eligible_files    = get_nums_with_eligible_files(board, thread_num_2_op)
+            reply_nums_with_eligible_files = get_nums_with_eligible_files(board, thread_nums_2_media_posts)
+            nums_with_eligible_files       = op_nums_with_eligible_files | reply_nums_with_eligible_files
 
 
             if configs.boards[board].get('dl_full_media_op'):
-                download_thread_media_for_op(board, thread_num_2_op, MediaType.full_media, 'dl_full_media_op')
+                download_thread_media_for_posts(board, thread_num_2_op, thread_num_2_op, nums_with_eligible_files, MediaType.full_media, 'dl_full_media_op')
 
             if configs.boards[board].get('dl_full_media'):
-                download_thread_media_for_posts(board, thread_nums_2_media_posts, thread_num_2_op, MediaType.full_media, 'dl_full_media')
+                download_thread_media_for_posts(board, thread_nums_2_media_posts, thread_num_2_op, nums_with_eligible_files, MediaType.full_media, 'dl_full_media')
 
             # "if we're not making OP thumbs [with Convert or FFMPEG] from OP full media"
             if not (configs.make_thumbnails and configs.boards[board].get('dl_full_media_op')):
                 if configs.boards[board].get('dl_thumbs_op'):
-                    download_thread_media_for_op(board, thread_num_2_op, MediaType.thumbnail, 'dl_thumbs_op')
+                    download_thread_media_for_posts(board, thread_num_2_op, thread_num_2_op, nums_with_eligible_files, MediaType.thumbnail, 'dl_thumbs_op')
 
             # "if we're not making thumbs [with Convert or FFMPEG] from full media"
             if not (configs.make_thumbnails and configs.boards[board].get('dl_full_media')):
                 if configs.boards[board].get('dl_thumbs'):
-                    download_thread_media_for_posts(board, thread_nums_2_media_posts, thread_num_2_op, MediaType.thumbnail, 'dl_thumbs')
+                    download_thread_media_for_posts(board, thread_nums_2_media_posts, thread_num_2_op, nums_with_eligible_files, MediaType.thumbnail, 'dl_thumbs')
 
             times[board] = round((time.time() - start) / 60, 2) # minutes
 
