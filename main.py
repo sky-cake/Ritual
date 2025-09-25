@@ -271,7 +271,7 @@ def upsert_thread_num_2_posts(board: str, thread_num_2_posts: dict[int, list[dic
             d_board = get_d_board(post, unescape_data_b4_db_write=configs.unescape_data_b4_db_write)
             post_rows.append(d_board)
 
-    do_upsert_many(board, post_rows, 'num')
+    do_upsert_many(board, post_rows, 'num, subnum')
 
 
 def match_sub_and_com(post_op: dict, pattern: str):
@@ -305,7 +305,8 @@ def get_url_and_filename(board: str, post: dict, media_type: MediaType):
 
 
 def download_thread_media_for_post(board: str, thread_op_post: dict, post: dict, nums_with_eligible_files: set[int], media_type: MediaType, qualifier: str):
-    """`post` only required `tim` and `ext` keys."""
+    """`post` only requires `no`, `tim` and `ext` keys."""
+
     if not post_has_file(post):
         return
 
