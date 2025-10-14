@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS `%%BOARD%%` (
     poster_hash TEXT,
     poster_country TEXT,
     exif TEXT,
-    UNIQUE (num)
+    UNIQUE (num, subnum)
 );
 
 CREATE TABLE IF NOT EXISTS `%%BOARD%%_images` (

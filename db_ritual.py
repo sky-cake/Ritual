@@ -40,6 +40,14 @@ class RitualDb(SqliteDb):
         self.run_query_tuple(sql, params=pids, commit=True)
 
 
+    def set_threads_deleted(self, board: str, tids: list[int]) -> None:
+        if not tids:
+            return
+
+        sql = f"update `{board}` set deleted = 1 where num in ({get_placeholders(tids)});"
+        self.run_query_tuple(sql, params=tids, commit=True)
+
+
     def upsert_many(self, board: str, rows: list[dict], conflict_col: str, batch_size: int=500):
         if not rows:
             return

@@ -30,19 +30,17 @@ from utils import (
 
 
 class Init:
-    def __init__(self, ritual_db: RitualDb):
+    def __init__(self):
         if configs.make_thumbnails:
             test_deps(configs.logger)
-
-        ritual_db.init_db()
 
 
 class Loop:
     '''Loop mechanisms, and stats.'''
     def __init__(self):
         self.loop_i: int = 1
-        self.start_time: float = None
-        self.board_2_duration = dict()
+        self.start_time: float | None = None
+        self.board_2_duration: dict[str, float] = dict()
         configs.logger.info(f'Loop #{self.loop_i} Started')
 
     @property
@@ -80,7 +78,7 @@ class Loop:
 class State:
     def __init__(self, loop: Loop):
         self.last_modified_filepath = make_path('cache', 'd_last_modified.json')
-        self.last_modified: dict[str, dict] = dict()
+        self.last_modified: dict[str, dict[int, float]] = dict()
 
         self.loop = loop
 
@@ -88,7 +86,7 @@ class State:
 
 
     @property
-    def ignore_last_modified(self):
+    def ignore_last_modified(self) -> bool:
         return self.loop.is_first_loop and configs.ignore_last_modified
 
 
@@ -99,7 +97,7 @@ class State:
 
     def read(self):
         '''reads in every cache'''
-        self.last_modified = self._get_cached_d_last_modified(self.last_modified_filepath)
+        self.last_modified = self._get_cached_d_last_modified()
 
 
     def _get_cached_d_last_modified(self):
@@ -110,10 +108,7 @@ class State:
             return dict()
 
         return {
-            board: {
-                int(k_tid): v_last_modified
-                for k_tid, v_last_modified in tid_2_last_modified.items()
-            }
+            board: {int(tid): lm for tid, lm in tid_2_last_modified.items()}
             for board, tid_2_last_modified in last_modified.items()
         }
 
@@ -122,14 +117,12 @@ class State:
         """
         `True` indicates we should download the thread.
         """
-        if not self.last_modified:
-            return True
 
         tid = thread['no']
         thread_last_modified = thread.get('last_modified')
 
         if board not in self.last_modified:
-            self.last_modified[board] = {}
+            self.last_modified[board] = dict()
 
         # should come before entry pruning
         thread_last_modified_cached = self.last_modified[board].get(tid)
@@ -139,9 +132,9 @@ class State:
 
         # Don't let the dict grow over N entries per board.
         N = 200
-        if len(self.last_modified[board]) > N:
-            # In case of multiple stickies, or similar special threads, we delete M oldest threads
-            M = 10
+        if (count := len(self.last_modified[board])) > N:
+            # In case of multiple stickies, or similar special threads, we delete the extras, plus M oldest threads
+            M = count - N + 10
             temp_ids = sorted(self.last_modified[board], key=lambda tid: self.last_modified[board][tid])
             for stale_id in temp_ids[:M]:
                 del self.last_modified[board][stale_id] # prune
@@ -163,15 +156,19 @@ class Fetcher:
 
     def fetch_json(self, url, headers=None, request_cooldown_sec: float=None, add_random: bool=False) -> dict:
         resp = self.session.get(url, headers=headers)
+
         if request_cooldown_sec:
             sleep(request_cooldown_sec, add_random=add_random)
 
         if resp.status_code == 200:
             return resp.json()
 
+        return dict()
+
     def sleep(self):
         if configs.loop_cooldown_sec >= 15.0:
             self.session.close()
+            self.session = Session()
 
 
 class Catalog:
@@ -180,7 +177,7 @@ class Catalog:
 
         self.board: str = board
         self.catalog: list[dict] = []
-        self.tid_2_thread: dict[int, list[dict]] = dict()
+        self.tid_2_thread: dict[int, dict] = dict()
         self.tid_2_last_replies: dict[int, list[dict]] = dict()
 
 
@@ -205,7 +202,7 @@ class Catalog:
         configs.logger.info(f'[{self.board}] Downloaded catalog')
 
         if not self.catalog:
-            configs.logger.info(f"Catalog returned {self.catalog}")
+            configs.logger.info(f'[{self.board}] Catalog empty')
             return False
         
         self.set_tid_2_thread()
@@ -251,12 +248,12 @@ class Posts:
         - marks deleted posts as deleted in the database
         '''
 
-        # TODO: add support for marking OPs as deleted
+        # TODO: add better support for marking OPs as deleted
 
         pids_deleted = []
+        tids_deleted = []
 
         for tid in self.tid_2_thread:
-
             thread = self.fetcher.fetch_json(
                 configs.url_thread.format(board=self.board, thread_id=tid),
                 headers=configs.headers,
@@ -266,6 +263,7 @@ class Posts:
 
             if not thread:
                 configs.logger.info(f'[{self.board}] Lost Thread [{tid}]')
+                tids_deleted.append(tid)
                 continue
 
             configs.logger.info(f'[{self.board}] Found thread [{tid}]')
@@ -285,6 +283,9 @@ class Posts:
 
         if pids_deleted:
             self.db.set_posts_deleted(self.board, pids_deleted)
+
+        if tids_deleted:
+            self.db.set_threads_deleted(self.board, tids_deleted)
 
         self.set_pid_2_post()
 
@@ -313,11 +314,10 @@ class Filter:
         self.tid_2_thread: dict[int, dict] = dict()
         self.tid_2_posts: dict[int, list[dict]] = dict()
 
-        self.full_pids = set()
-        self.thumb_pids = set()
+        self.full_pids: set[int] = set()
+        self.thumb_pids: set[int] = set()
 
-
-    def set_tid_2_posts(self, tid_2_posts):
+    def set_tid_2_posts(self, tid_2_posts: dict[int, list[dict]]):
         self.tid_2_posts = tid_2_posts
 
 
@@ -362,7 +362,7 @@ class Filter:
         configs.logger.info(f'[{self.board}] {msg}{len(self.tid_2_thread)} thread(s) are modified and will be queued.')
 
 
-    def should_archive(self, subject: str, comment: str, whitelist: str =None, blacklist: str=None):
+    def should_archive(self, subject: str, comment: str, whitelist: str=None, blacklist: str=None):
         """
         - If a post is blacklisted and whitelisted, it will not be archived - blacklisted filters take precedence over whitelisted filters.
         - If only a blacklist is specified, skip blacklisted posts, and archive everything else.
@@ -379,24 +379,17 @@ class Filter:
 
         blacklist_post_filter = configs.boards[self.board].get('blacklist') if blacklist is None else blacklist
         if blacklist_post_filter:
-            if subject:
-                if re.fullmatch(blacklist_post_filter, subject, re.IGNORECASE) is not None:
-                    return False
-
-            if comment:
-                if re.fullmatch(blacklist_post_filter, comment, re.IGNORECASE) is not None:
-                    return False
+            if subject and re.search(blacklist_post_filter, subject, re.IGNORECASE):
+                return False
+            if comment and re.search(blacklist_post_filter, comment, re.IGNORECASE):
+                return False
 
         whitelist_post_filter = configs.boards[self.board].get('whitelist') if whitelist is None else whitelist
         if whitelist_post_filter:
-            if subject:
-                if re.fullmatch(whitelist_post_filter, subject, re.IGNORECASE) is not None:
-                    return True
-
-            if comment:
-                if re.fullmatch(whitelist_post_filter, comment, re.IGNORECASE) is not None:
-                    return True
-            
+            if subject and re.search(whitelist_post_filter, subject, re.IGNORECASE):
+                return True
+            if comment and re.search(whitelist_post_filter, comment, re.IGNORECASE):
+                return True
             return False
 
         return True
@@ -413,13 +406,13 @@ class Filter:
             if isinstance(pattern, str) and not match_sub_and_com(post, pattern):
                 return False
 
-            filename = get_filename(self.board, post, media_type)
+            filename = get_filename(post, media_type)
             filepath = get_filepath(configs.media_save_path, self.board, media_type, filename)
 
             # os.path.isfile is cheap, no need for a cache
             if os.path.isfile(filepath):
                 return False
-
+            
             return True
 
         for tid, posts in self.tid_2_posts.items():            
@@ -476,9 +469,10 @@ class Filter:
         )
 
         if not is_success:
-            return is_success
+            configs.logger.info(f'[{self.board}] Failed to download [{media_type.value}] {filepath}')
+            return False
 
-        configs.logger.info(f"[{self.board}] Downloaded [{media_type.value}] {filepath}")
+        configs.logger.info(f'[{self.board}] Downloaded [{media_type.value}] {filepath}')
         if media_type == MediaType.full_media and configs.make_thumbnails:
             thumb_path = get_filepath(configs.media_save_path, self.board, MediaType.thumbnail, get_fs_filename_thumbnail(post))
             sleep(0.1, add_random=configs.add_random)
@@ -486,6 +480,7 @@ class Filter:
 
 
 def main():
+    Init()
     db = RitualDb(configs.db_path)
     fetcher = Fetcher()
     loop = Loop()

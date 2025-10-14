@@ -205,11 +205,11 @@ PositiveInt = Annotated[int, Field(gt=0)]
 NonNegativeInt = Annotated[int, Field(ge=0)]
 ZeroOrOne = Annotated[int, Field(ge=0, le=1)]
 
-ExtLiteral = Literal['.jpg', '.png', '.gif', '.pdf', '.swf', '.webm']
+ExtLiteral = Literal['.jpg', '.png', '.gif', '.pdf', '.swf', '.webm', '.mp4']
 CapcodeLiteral = Literal['mod', 'admin', 'admin_highlight', 'manager', 'developer', 'founder']
 
-ShortStr = Annotated[str, Field(min_length=1, max_length=512)]
-LongStr = Annotated[str, Field(min_length=1, max_length=8192)]
+ShortStr = Annotated[str, Field(min_length=0, max_length=512)]
+LongStr = Annotated[str, Field(min_length=0, max_length=8192)]
 
 
 class BasePost(BaseModel):
