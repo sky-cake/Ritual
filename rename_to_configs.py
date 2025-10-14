@@ -10,7 +10,7 @@ video_cooldown_sec = 3.2
 image_cooldown_sec = 2.2
 add_random = False # add random sleep intervals
 
-reinitialize = True # on restarts, ignore last modified times and go through all threads
+ignore_last_modified = True # on restarts, ignore last modified times and go through all threads
 
 media_save_path = make_path('media')
 database = make_path('ritual.db') # sqlite

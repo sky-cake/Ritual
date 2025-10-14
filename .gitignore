@@ -11,3 +11,4 @@ venv/
 *.jpeg
 *.gif
 cache/
+launch.json

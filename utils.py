@@ -1,13 +1,270 @@
+import html
 import json
 import logging
 import os
 import random
+import re
+import secrets
+import string
 import subprocess
 import time
 from collections import OrderedDict
 from logging.handlers import RotatingFileHandler
+from typing import Annotated, Literal
 
-from requests import Session, get as requests_get
+from pydantic import BaseModel, Field
+from requests import Session
+from requests import get as requests_get
+
+from enums import MediaType
+
+
+def is_post_media_file_video(post):
+    return post.get('ext', '').endswith(('webm', 'mp4', 'gif'))
+
+
+def is_post_media_file_image(post):
+    return post.get('ext', '').endswith(('jpg', 'png', 'jpeg', 'webp', 'bmp'))
+
+
+def convert_to_asagi_capcode(a):
+    if a:
+        if a == "mod": return "M"
+        if a == "admin": return "A"
+        if a == "admin_highlight": return "A"
+        if a == "developer": return "D"
+        if a == "verified": return "V"
+        if a == "founder": return "F"
+        if a == "manager": return "G"
+
+        return "M"
+
+    return "N"
+
+
+def convert_to_asagi_comment(a):
+    if not a:
+        return a
+
+    # literal tags
+    if "[" in a:
+        a = re.sub(
+            "\\[(/?(spoiler|code|math|eqn|sub|sup|b|i|o|s|u|banned|info|fortune|shiftjis|sjis|qstcolor))\\]",
+            "[\\1:lit]",
+            a
+        )
+
+    # abbr, exif, oekaki
+    if "\"abbr" in a: a = re.sub("((<br>){0-2})?<span class=\"abbr\">(.*?)</span>", "", a)
+    if "\"exif" in a: a = re.sub("((<br>)+)?<table class=\"exif\"(.*?)</table>", "", a)
+    if ">Oek" in a: a = re.sub("((<br>)+)?<small><b>Oekaki(.*?)</small>", "", a)
+
+    # banned
+    if "<stro" in a:
+        a = re.sub("<strong style=\"color: ?red;?\">(.*?)</strong>", "[banned]\\1[/banned]", a)
+
+    # fortune
+    if "\"fortu" in a:
+        a = re.sub(
+            "<span class=\"fortune\" style=\"color:(.+?)\"><br><br><b>(.*?)</b></span>",
+            "\n\n[fortune color=\"\\1\"]\\2[/fortune]",
+            a
+        )
+
+    # dice roll
+    if "<b>" in a:
+        a = re.sub(
+            "<b>(Roll(.*?))</b>",
+            "[b]\\1[/b]",
+            a
+        )
+
+    # code tags
+    if "<pre" in a:
+        a = re.sub("<pre[^>]*>", "[code]", a)
+        a = a.replace("</pre>", "[/code]")
+
+    # math tags
+    if "\"math" in a:
+        a = re.sub("<span class=\"math\">(.*?)</span>", "[math]\\1[/math]", a)
+        a = re.sub("<div class=\"math\">(.*?)</div>", "[eqn]\\1[/eqn]", a)
+
+    # sjis tags
+    if "\"sjis" in a:
+        a = re.sub("<span class=\"sjis\">(.*?)</span>", "[shiftjis]\\1[/shiftjis]", a) # use [sjis] maybe?
+
+    # quotes & deadlinks
+    if "<span" in a:
+        a = re.sub("<span class=\"quote\">(.*?)</span>", "\\1", a)
+    
+        # hacky fix for deadlinks inside quotes
+        for idx in range(3):
+            if not "deadli" in a: break
+            a = re.sub("<span class=\"(?:[^\"]*)?deadlink\">(.*?)</span>", "\\1", a)
+
+    # other links
+    if "<a" in a:
+        a = re.sub("<a(?:[^>]*)>(.*?)</a>", "\\1", a)
+
+    # spoilers
+    a = a.replace("<s>", "[spoiler]")
+    a = a.replace("</s>", "[/spoiler]")
+
+    # newlines
+    a = a.replace("<br>", "\n")
+    a = a.replace("<br/>", "\n")
+    a = a.replace("<wbr>", "")
+
+    a = html.unescape(a)
+
+    return a
+
+
+def post_has_file(post: dict) -> bool:
+    return post.get('tim') and post.get('ext')
+
+
+def get_fs_filename_full_media(post: dict) -> str:
+    if post_has_file(post):
+        return f"{post.get('tim')}{post.get('ext')}"
+
+
+def get_fs_filename_thumbnail(post: dict) -> str:
+    if post_has_file(post):
+        return f"{post.get('tim')}s.jpg"
+
+
+def post_is_sticky(post: dict) -> bool:
+    return post.get('sticky') == 1
+
+
+def create_thumbnail(post: dict, full_path: str, thumb_path: str, logger=None):
+    if not post_has_file(post):
+        return
+
+    if is_post_media_file_video(post):
+        create_thumbnail_from_video(full_path, thumb_path, logger=logger)
+        return
+
+    if is_post_media_file_image(post):
+        create_thumbnail_from_image(full_path, thumb_path, logger=logger)
+        return
+
+
+digits = '0123456789'
+def get_filepath(media_save_path: str, board: str, media_type: MediaType, filename: str) -> str:
+    """Will create filepath directories if they don't exist."""
+    tim = filename.rsplit('.', maxsplit=1)[0]
+    assert len(tim) >= 6 and all(t in digits for t in tim[:6])
+    dir_path = make_path(media_save_path, board, media_type.value, filename[:4], filename[4:6])
+    os.makedirs(dir_path, mode=775, exist_ok=True)
+    os.chmod(dir_path, 0o775)
+    return os.path.join(dir_path, filename)
+
+
+
+def get_d_board(post: dict, unescape_data_b4_db_write: bool=True):
+    return {
+        # 'doc_id': post.get('doc_id'), # autoincremented
+        'media_id': 0, # inserted/updated by triggers
+        'poster_ip': post.get('poster_ip', '0'),
+        'num': post.get('no', 0),
+        'subnum': post.get('subnum', 0),
+        'thread_num': post.get('no') if post.get('resto') == 0 else post.get('resto'),
+        'op': 1 if post.get('resto') == 0 else 0,
+        'timestamp': post.get('time', 0),
+        'timestamp_expired': post.get('archived_on', 0),
+        'preview_orig': get_fs_filename_thumbnail(post),
+        'preview_w': post.get('tn_w', 0),
+        'preview_h': post.get('tn_h', 0),
+        'media_filename': html.unescape(f"{post.get('filename')}{post.get('ext')}") if post.get('filename') and post.get('ext') and unescape_data_b4_db_write else None,
+        'media_w': post.get('w', 0),
+        'media_h': post.get('h', 0),
+        'media_size': post.get('fsize', 0),
+        'media_hash': post.get('md5'),
+        'media_orig': get_fs_filename_full_media(post),
+        'spoiler': post.get('spoiler', 0),
+        'deleted': post.get('filedeleted', 0),
+        'capcode': convert_to_asagi_capcode(post.get('capcode')),
+        'email': post.get('email'),
+        'name': html.unescape(post.get('name')) if post.get('name') and unescape_data_b4_db_write else None,
+        'trip': post.get('trip'),
+        'title': html.unescape(post.get('sub')) if post.get('sub') and unescape_data_b4_db_write else None,
+        'comment': convert_to_asagi_comment(post.get('com')) if unescape_data_b4_db_write else post.get('com'),
+        'delpass': post.get('delpass'),
+        'sticky': post.get('sticky', 0),
+        'locked': post.get('closed', 0),
+        'poster_hash': post.get('id'),
+        'poster_country': post.get('country_name'),
+        'exif': json.dumps({'uniqueIps': int(post.get('unique_ips'))}) if post.get('unique_ips') else None,
+    }
+
+
+
+PositiveInt = Annotated[int, Field(gt=0)]
+NonNegativeInt = Annotated[int, Field(ge=0)]
+ZeroOrOne = Annotated[int, Field(ge=0, le=1)]
+
+ExtLiteral = Literal['.jpg', '.png', '.gif', '.pdf', '.swf', '.webm']
+CapcodeLiteral = Literal['mod', 'admin', 'admin_highlight', 'manager', 'developer', 'founder']
+
+ShortStr = Annotated[str, Field(min_length=1, max_length=512)]
+LongStr = Annotated[str, Field(min_length=1, max_length=8192)]
+
+
+class BasePost(BaseModel):
+    no: PositiveInt
+    resto: NonNegativeInt
+    sticky: ZeroOrOne | None = None
+    closed: ZeroOrOne | None = None
+    now: ShortStr
+    time: PositiveInt
+    name: ShortStr | None = None
+    trip: ShortStr | None = None
+    id: Annotated[str, Field(min_length=8, max_length=8)] | None = None
+    capcode: CapcodeLiteral | None = None
+    country: Annotated[str, Field(min_length=2, max_length=2)] | None = None
+    country_name: ShortStr | None = None
+    sub: ShortStr | None = None
+    com: LongStr | None = None
+    tim: PositiveInt | None = None
+    filename: ShortStr | None = None
+    ext: ExtLiteral | None = None
+    fsize: PositiveInt | None = None
+    md5: Annotated[str, Field(min_length=24, max_length=24)] | None = None
+    w: PositiveInt | None = None
+    h: PositiveInt | None = None
+    tn_w: PositiveInt | None = None
+    tn_h: PositiveInt | None = None
+    filedeleted: ZeroOrOne | None = None
+    spoiler: ZeroOrOne | None = None
+    custom_spoiler: Annotated[int, Field(ge=1, le=10)] | None = None
+    m_img: ZeroOrOne | None = None
+
+    replies: NonNegativeInt | None = None
+    images: NonNegativeInt | None = None
+    bumplimit: ZeroOrOne | None = None
+    imagelimit: ZeroOrOne | None = None
+    tag: ShortStr | None = None
+    semantic_url: ShortStr | None = None
+    since4pass: Annotated[int, Field(ge=2000, le=2099)] | None = None
+    unique_ips: PositiveInt | None = None
+
+
+class ChanPost(BasePost):
+    '''https://github.com/4chan/4chan-API/blob/master/pages/Threads.md'''
+    board_flag: ShortStr | None = None
+    flag_name: ShortStr | None = None
+    archived: ZeroOrOne | None = None
+    archived_on: PositiveInt | None = None
+
+
+class ChanThread(BasePost):
+    '''https://github.com/4chan/4chan-API/blob/master/pages/Catalog.md'''
+    last_modified: PositiveInt | None = None
+    omitted_posts: NonNegativeInt | None = None
+    omitted_images: NonNegativeInt | None = None
+    last_replies: list[ChanPost] | None = None
 
 
 def test_deps(logger: logging.Logger):
@@ -40,13 +297,13 @@ def setup_logger(logger_name, log_file=False, stdout=True, file_rotate_size=1 * 
     return logger
 
 
-def write_json(fpath, obj):
-    os.makedirs(os.path.dirname(fpath), exist_ok=True)
-    with open(fpath, mode='w', encoding='utf-8') as f:
+def write_json_obj_to_file(filepath: str, obj):
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    with open(filepath, mode='w', encoding='utf-8') as f:
         json.dump(obj, f)
 
 
-def read_json(fpath):
+def read_json(fpath) -> dict:
     if not os.path.isfile(fpath):
         return None
 
@@ -67,16 +324,54 @@ def log_warning(logger: logging.Logger, message: str):
     print(f'Warning: {message}')
 
 
-def fetch_json(url, headers=None, request_cooldown_sec: float=None, add_random: bool=False, session: Session=None) -> dict:
-    try:
-        resp = session.get(url, headers=headers) if session else requests_get(url, headers=headers)
-        if request_cooldown_sec:
-            sleep(request_cooldown_sec, add_random=add_random)
+def match_sub_and_com(post: dict, pattern: str):
+    sub = post.get('sub')
+    com = post.get('com')
 
-        if resp.status_code == 200:
-            return resp.json()
-    except Exception:
-        sleep(7.5)
+    if sub and re.fullmatch(pattern, sub, re.IGNORECASE):
+        return True
+
+    if com and re.fullmatch(pattern, com, re.IGNORECASE):
+        return True
+
+    return False
+
+
+def get_n_random_chars(n: int):
+    return ''.join(secrets.choice(string.ascii_letters) for _ in range(n))
+
+
+def get_random_querystring():
+    return f'{get_n_random_chars(5)}={get_n_random_chars(5)}'
+
+
+def get_url_and_filename(configs, board: str, post: dict, media_type: MediaType):
+    if media_type == MediaType.thumbnail:
+        url = configs.url_thumbnail.format(board=board, image_id=post['tim']) # ext is always .jpg
+        filename = get_fs_filename_thumbnail(post)
+
+    elif media_type == MediaType.full_media:
+        url = configs.url_full_media.format(board=board, image_id=post['tim'], ext=post['ext'])
+        filename = get_fs_filename_full_media(post)
+
+    else:
+        raise ValueError(media_type)
+    
+    url = f'{url}?{get_random_querystring()}'
+    return url, filename
+
+
+def get_filename(post: dict, media_type: MediaType):
+    if media_type == MediaType.thumbnail:
+        filename = get_fs_filename_thumbnail(post)
+
+    elif media_type == MediaType.full_media:
+        filename = get_fs_filename_full_media(post)
+
+    else:
+        raise ValueError(media_type)
+
+    return filename
 
 
 def download_file(url: str, filepath: str, video_cooldown_sec: float=3.2, image_cooldown_sec: float=2.2, add_random: bool=False, headers: dict=None, logger: logging.Logger=None, session: Session=None):
@@ -98,7 +393,7 @@ def download_file(url: str, filepath: str, video_cooldown_sec: float=3.2, image_
 
         if resp.status_code != 200:
             log_warning(logger, f'{url=} {resp.status_code=}')
-            return
+            return False
 
         if resp.status_code == 200 and resp.content:
             with open(filepath, 'wb') as f:
