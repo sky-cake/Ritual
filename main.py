@@ -707,7 +707,6 @@ class Filter:
         )
 
         if not is_success:
-            configs.logger.info(f'[{self.board}] Failed to download [{media_type.value}] {filepath}')
             return False
 
         configs.logger.info(f'[{self.board}] Downloaded [{media_type.value}] {filepath}')

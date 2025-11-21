@@ -427,13 +427,13 @@ def get_md5_hash_bytes(content: bytes) -> str:
 
 def download_file(url: str, filepath: str, video_cooldown_sec: float=3.2, image_cooldown_sec: float=2.2, add_random: bool=False, headers: dict=None, logger: logging.Logger=None, session: Session=None, expected_size: int | None=None, expected_md5: str | None=None):
     if is_video_path(filepath):
-        ts = [video_cooldown_sec, 4.0, 6.0, 10.0]
-        max_retries_404 = 5
-        max_retries_other = 30
+        ts = [video_cooldown_sec, 6.0, 10.0]
+        max_retries_404 = 1
+        max_retries_other = 2
     elif is_image_path(filepath):
-        ts = [image_cooldown_sec, 4.0, 6.0, 10.0]
-        max_retries_404 = 10
-        max_retries_other = 30
+        ts = [image_cooldown_sec, 6.0, 10.0]
+        max_retries_404 = 1
+        max_retries_other = 2
     else:
         raise ValueError(filepath)
 
@@ -464,10 +464,10 @@ def download_file(url: str, filepath: str, video_cooldown_sec: float=3.2, image_
                         pass
 
                 if post_age_seconds and post_age_seconds < 864000:
-                    log_warning(logger, f'File size mismatch {url=} {filepath=} expected={expected_size} got={len(content)}')
-                    retry_count += 1
-                    sleep(ts[min(retry_count, len(ts) - 1)], add_random=add_random)
-                    continue
+                    resp_size = len(content)
+                    if resp_size > expected_size:
+                        log_warning(logger, f'File size large than expected {url=} {filepath=} expected={expected_size} got={resp_size}. Skipping.')
+                        return False
 
             if expected_md5:
                 file_hash = get_md5_hash_bytes(content)
