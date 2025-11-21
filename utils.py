@@ -240,7 +240,7 @@ class BasePost(BaseModel):
     time: PositiveInt
     name: ShortStr | None = None
     trip: ShortStr | None = None
-    id: Annotated[str, Field(min_length=8, max_length=8)] | None = None
+    id: Annotated[str, Field(max_length=32)] | None = None
     capcode: CapcodeLiteral | None = None
     country: Annotated[str, Field(min_length=2, max_length=2)] | None = None
     country_name: ShortStr | None = None
