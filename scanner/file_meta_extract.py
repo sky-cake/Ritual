@@ -1,6 +1,6 @@
 from typing import TypeAlias
 import struct
-from path import Path
+from scanner.path2 import Path
 import hashlib
 import base64
 
@@ -184,7 +184,7 @@ def get_dimensions(fullpath: str=None, path: Path=None) -> WidthHeight:
             return get_mpeg_dimensions(path.fullpath)
 
 
-def hash_file(path: str, buffer_limit: int) -> tuple[str, str]:
+def get_hashes_for_file(path: str, buffer_limit: int) -> tuple[str, str]:
     sha = hashlib.sha256()
     md5 = hashlib.md5()
     with open(path, 'rb') as f:
@@ -195,3 +195,14 @@ def hash_file(path: str, buffer_limit: int) -> tuple[str, str]:
             sha.update(b)
             md5.update(b)
     return sha.hexdigest(), base64.b64encode(md5.digest()).decode()
+
+
+def get_md5_hash_file(path: str, buffer_limit: int) -> str:
+    md5 = hashlib.md5()
+    with open(path, 'rb') as f:
+        while True:
+            b = f.read(buffer_limit)
+            if not b:
+                break
+            md5.update(b)
+    return base64.b64encode(md5.digest()).decode()

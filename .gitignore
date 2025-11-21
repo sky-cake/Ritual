@@ -12,3 +12,5 @@ venv/
 *.gif
 cache/
 launch.json
+.pytest_cache/
+.venv/

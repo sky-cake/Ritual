@@ -1,7 +1,6 @@
 import configs
-from asagi import get_d_board, post_is_sticky
 from db_sqlite import SqliteDb, get_placeholders
-from utils import make_path
+from utils import get_d_board, make_path
 
 
 class RitualDb(SqliteDb):
@@ -65,13 +64,69 @@ class RitualDb(SqliteDb):
             self.run_query_tuple(sql, params=flat_values, commit=True)
 
 
+    def get_existing_media_hashes(self, board: str, media_hashes: list[str]) -> set[str]:
+        if not media_hashes:
+            return set()
+
+        sql = f"""
+            select distinct media_hash
+            from `{board}`
+            where
+                media_hash in ({get_placeholders(media_hashes)})
+                and media_hash is not null;
+        """
+        rows = self.run_query_tuple(sql, params=media_hashes)
+        return {row[0] for row in rows} if rows else set()
+
+
+    def get_media_hash_info(self, board: str, media_hashes: list[str]) -> tuple[dict[str, str], set[str]]:
+        if not media_hashes:
+            return dict(), set()
+
+        sql = f"""
+            select media_hash, media, banned
+            from `{board}_images`
+            where media_hash in ({get_placeholders(media_hashes)});
+        """
+        rows = self.run_query_tuple(sql, params=media_hashes)
+        if not rows:
+            return dict(), set()
+
+        md5_2_media_filename = dict()
+        banned_hashes = set()
+        for row in rows:
+            hash_val = row[0]
+            media_filename = row[1]
+            banned_val = row[2]
+            if media_filename:
+                md5_2_media_filename[hash_val] = media_filename
+            if banned_val != 0:
+                banned_hashes.add(hash_val)
+
+        return md5_2_media_filename, banned_hashes
+
+
+    def upsert_image(self, board: str, media_hash: str, media: str | None):
+        """
+        Ritual doesn't make a distinction between OP and reply thumbnails.
+        """
+        if not media_hash:
+            return
+
+        sql = f"""
+            insert into `{board}_images` (media_hash, media, total, banned)
+            values (?, ?, ?, 1, 0)
+            on conflict(media_hash) do update set
+                total = total + 1,
+                media = coalesce(media, excluded.media)
+        ;"""
+        self.run_query_tuple(sql, params=(media_hash, media), commit=True)
+
+
     def upsert_posts(self, board: str, posts: list[dict]):
         posts_to_insert = []
 
         for post in posts:
-            if post_is_sticky(post):
-                continue
-
             d_board = get_d_board(post, unescape_data_b4_db_write=configs.unescape_data_b4_db_write)
             posts_to_insert.append(d_board)
 

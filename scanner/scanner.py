@@ -1,8 +1,8 @@
 import os
 import sys
 from itertools import batched
-from path import Path
-from file_meta_extract import get_dimensions, hash_file
+from path2 import Path
+from file_meta_extract import get_dimensions, get_hashes_for_file
 from db_scanner import ScannerDb
 from progress import Counter
 
@@ -23,7 +23,7 @@ def iter_media_files(root: str, skip_dirnames: set[str] | None=None):
 def get_and_set_metadata(path: Path) -> Path:
 
     path.bsize = os.path.getsize(path.fullpath)
-    path.sha256, path.md5_b64 = hash_file(path.fullpath, HASH_BUFFER_LIMIT)
+    path.sha256, path.md5_b64 = get_hashes_for_file(path.fullpath, HASH_BUFFER_LIMIT)
     path.w, path.h = get_dimensions(path.fullpath)
 
     return path

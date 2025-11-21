@@ -1,4 +1,7 @@
+import base64
+import hashlib
 import html
+import html.parser
 import json
 import logging
 import os
@@ -96,7 +99,7 @@ def convert_to_asagi_comment(a):
     # quotes & deadlinks
     if "<span" in a:
         a = re.sub("<span class=\"quote\">(.*?)</span>", "\\1", a)
-    
+
         # hacky fix for deadlinks inside quotes
         for idx in range(3):
             if not "deadli" in a: break
@@ -134,10 +137,6 @@ def get_fs_filename_thumbnail(post: dict) -> str:
         return f"{post.get('tim')}s.jpg"
 
 
-def post_is_sticky(post: dict) -> bool:
-    return post.get('sticky') == 1
-
-
 def create_thumbnail(post: dict, full_path: str, thumb_path: str, logger=None):
     if not post_has_file(post):
         return
@@ -163,10 +162,10 @@ def get_filepath(media_save_path: str, board: str, media_type: MediaType, filena
 
 
 
-def get_d_board(post: dict, unescape_data_b4_db_write: bool=True):
+def get_d_board(post: dict, media_id: int | None = None, unescape_data_b4_db_write: bool=True):
     return {
         # 'doc_id': post.get('doc_id'), # autoincremented
-        'media_id': 0, # inserted/updated by triggers
+        'media_id': media_id or 0, # inserted/updated by triggers
         'poster_ip': post.get('poster_ip', '0'),
         'num': post.get('no', 0),
         'subnum': post.get('subnum', 0),
@@ -199,6 +198,26 @@ def get_d_board(post: dict, unescape_data_b4_db_write: bool=True):
         'exif': json.dumps({'uniqueIps': int(post.get('unique_ips'))}) if post.get('unique_ips') else None,
     }
 
+
+def get_thread_id_2_last_replies(catalog):
+    thread_id_2_last_replies = {}
+    for page in catalog:
+        for thread in page['threads']:
+            if thread.get('last_replies'):
+                thread_id_2_last_replies[thread['no']] = thread.get('last_replies')
+    return thread_id_2_last_replies
+
+
+def get_d_image(post: dict, is_op: bool):
+    return {
+        # 'media_id': post.get('media_id'), # autoincremented
+        'media_hash': post.get('md5'),
+        'media': get_fs_filename_full_media(post),
+        'preview_op': get_fs_filename_thumbnail(post) if is_op else None,
+        'preview_reply': get_fs_filename_thumbnail(post) if not is_op else None,
+        'total': 0,
+        'banned': 0,
+    }
 
 
 PositiveInt = Annotated[int, Field(gt=0)]
@@ -324,15 +343,40 @@ def log_warning(logger: logging.Logger, message: str):
     print(f'Warning: {message}')
 
 
+class TextExtractor(html.parser.HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.text = []
+
+    def handle_data(self, data: str):
+        self.text.append(data)
+
+    def get_text(self) -> str:
+        return ' '.join(self.text)
+
+
+def extract_text_from_html(html_str: str) -> str:
+    if not html_str:
+        return ''
+    parser = TextExtractor()
+    parser.feed(html_str)
+    return html.unescape(parser.get_text())
+
+
 def match_sub_and_com(post: dict, pattern: str):
+    """Compares a post's raw api data to patterns."""
     sub = post.get('sub')
     com = post.get('com')
 
-    if sub and re.fullmatch(pattern, sub, re.IGNORECASE):
-        return True
+    if sub:
+        sub_text = html.unescape(sub)
+        if re.fullmatch(pattern, sub_text, re.IGNORECASE):
+            return True
 
-    if com and re.fullmatch(pattern, com, re.IGNORECASE):
-        return True
+    if com:
+        com_text = extract_text_from_html(com)
+        if re.fullmatch(pattern, com_text, re.IGNORECASE):
+            return True
 
     return False
 
@@ -356,7 +400,8 @@ def get_url_and_filename(configs, board: str, post: dict, media_type: MediaType)
 
     else:
         raise ValueError(media_type)
-    
+
+    # avoid cloudflare's recompressed media
     url = f'{url}?{get_random_querystring()}'
     return url, filename
 
@@ -374,35 +419,75 @@ def get_filename(post: dict, media_type: MediaType):
     return filename
 
 
-def download_file(url: str, filepath: str, video_cooldown_sec: float=3.2, image_cooldown_sec: float=2.2, add_random: bool=False, headers: dict=None, logger: logging.Logger=None, session: Session=None):
+def get_md5_hash_bytes(content: bytes) -> str:
+    hash_obj = hashlib.md5()
+    hash_obj.update(content)
+    return base64.b64encode(hash_obj.digest()).decode('ascii')
+
+
+def download_file(url: str, filepath: str, video_cooldown_sec: float=3.2, image_cooldown_sec: float=2.2, add_random: bool=False, headers: dict=None, logger: logging.Logger=None, session: Session=None, expected_size: int | None=None, expected_md5: str | None=None):
     if is_video_path(filepath):
         ts = [video_cooldown_sec, 4.0, 6.0, 10.0]
+        max_retries_404 = 5
+        max_retries_other = 30
     elif is_image_path(filepath):
         ts = [image_cooldown_sec, 4.0, 6.0, 10.0]
+        max_retries_404 = 10
+        max_retries_other = 30
     else:
         raise ValueError(filepath)
 
-    for i, t in enumerate(ts):
+    retry_count = 0
+
+    while retry_count < max_retries_other:
         resp = session.get(url, headers=headers) if session else requests_get(url, headers=headers)
-        if i > 0:
-            video_cooldown_sec += 1.0
-            image_cooldown_sec += 1.0
-            log_warning(logger, f'Incremented 1 second to cooldowns, new cooldowns are: {video_cooldown_sec=} {image_cooldown_sec=}')
 
-        sleep(t, add_random=add_random)
-
-        if resp.status_code != 200:
+        if resp.status_code == 404:
+            if retry_count >= max_retries_404:
+                log_warning(logger, f'Max 404 retries exceeded {url=} {filepath=}')
+                return False
+        elif resp.status_code != 200:
             log_warning(logger, f'{url=} {resp.status_code=}')
-            return False
+            if retry_count >= max_retries_other:
+                log_warning(logger, f'Max retries exceeded {url=} {filepath=}')
+                return False
+        elif resp.status_code == 200 and resp.content:
+            content = resp.content
 
-        if resp.status_code == 200 and resp.content:
+            if expected_size and len(content) != expected_size:
+                post_age_seconds = None
+                if expected_size:
+                    try:
+                        tim = int(os.path.basename(filepath).split('.')[0].rstrip('s'))
+                        post_age_seconds = time.time() - (tim / 1000)
+                    except:
+                        pass
+
+                if post_age_seconds and post_age_seconds < 864000:
+                    log_warning(logger, f'File size mismatch {url=} {filepath=} expected={expected_size} got={len(content)}')
+                    retry_count += 1
+                    sleep(ts[min(retry_count, len(ts) - 1)], add_random=add_random)
+                    continue
+
+            if expected_md5:
+                file_hash = get_md5_hash_bytes(content)
+
+                if file_hash != expected_md5:
+                    log_warning(logger, f'File hash mismatch {url=} {filepath=} expected={expected_md5} got={file_hash}')
+                    retry_count += 1
+                    sleep(ts[min(retry_count, len(ts) - 1)], add_random=add_random)
+                    continue
+
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
             with open(filepath, 'wb') as f:
-                f.write(resp.content)
+                f.write(content)
             return True
-    
-        log_warning(logger, f'No content {url=} {filepath=} {resp.content=}')
+
+        retry_count += 1
+        sleep(ts[min(retry_count, len(ts) - 1)], add_random=add_random)
 
     log_warning(logger, f'Max retries exceeded {url=} {filepath=}')
+    return False
 
 
 def is_video_path(path: str) -> bool:

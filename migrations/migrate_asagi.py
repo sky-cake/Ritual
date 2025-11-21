@@ -1,7 +1,5 @@
 import sqlite3
 
-from tqdm import tqdm
-
 all_4chan_boards = {
     "a": "Anime & Manga",
     "b": "Random",
@@ -101,7 +99,7 @@ def do_migration():
             sql = f.read()
 
         sqls = sql.replace('%%BOARD%%', board).split(';')
-        for sql in tqdm(sqls):
+        for sql in sqls:
             conn.execute(sql)
         conn.commit()
 

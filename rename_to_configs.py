@@ -1,7 +1,5 @@
 import os
 
-import tqdm
-
 from utils import make_path, setup_logger
 
 request_cooldown_sec = 1.2
@@ -10,10 +8,12 @@ video_cooldown_sec = 3.2
 image_cooldown_sec = 2.2
 add_random = False # add random sleep intervals
 
-ignore_last_modified = True # on restarts, ignore last modified times and go through all threads
+ignore_thread_cache = True # on restarts, ignore thread cache and go through all threads
+ignore_http_cache = False # always ignore http cache and go through all threads (used for testing)
+
 
 media_save_path = make_path('media')
-database = make_path('ritual.db') # sqlite
+db_path = make_path('ritual.db') # sqlite
 
 
 # If new posts are added to the database and Ritual is interrupted before their media is downloaded,
@@ -51,8 +51,6 @@ log_file = False # or make_path("ritual.log") if you want to log to files
 MB_5 = 5 * 1024 * 1024
 logger = setup_logger(logger_name, log_file=log_file, stdout=True, file_rotate_size=MB_5, max_files=3)
 
-# logger.info = tqdm.tqdm.write # do this when using stdout logging and tqdm
-disable_tqdm = True
 
 make_thumbnails = False # don't download thumbnails, create them when downloading full media
 

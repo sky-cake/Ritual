@@ -17,7 +17,7 @@ class ScannerDb(SqliteDb):
             ext_id integer primary key,
             ext text unique
         );
-        
+
         create table if not exists file (
             file_id integer primary key,
             dir_id integer,

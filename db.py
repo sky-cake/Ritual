@@ -3,6 +3,9 @@ import sqlite3
 import configs
 
 
+assert isinstance(configs.db_path, str)
+
+
 def dict_factory(cursor, row):
     d = {}
     for i, col in enumerate(cursor.description):
@@ -12,8 +15,7 @@ def dict_factory(cursor, row):
 
 def get_connection():
     # print('Creating database connection, started.')
-    assert isinstance(configs.database, str)
-    connection = sqlite3.connect(configs.database)
+    connection = sqlite3.connect(configs.db_path)
     connection.row_factory = dict_factory
     # print('Creating database connection, completed.')
     return connection

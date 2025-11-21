@@ -1,9 +1,8 @@
-import html
 import os
 import re
 import time
+import traceback
 
-import tqdm
 from requests import Session
 
 import configs
@@ -14,14 +13,15 @@ from utils import (
     ChanThread,
     create_thumbnail,
     download_file,
+    extract_text_from_html,
     get_filename,
     get_filepath,
+    get_fs_filename_full_media,
     get_fs_filename_thumbnail,
     get_url_and_filename,
     make_path,
     match_sub_and_com,
     post_has_file,
-    post_is_sticky,
     read_json,
     sleep,
     test_deps,
@@ -69,7 +69,7 @@ class Loop:
     def increment_loop(self):
         configs.logger.info(f'Loop #{self.loop_i} Completed\n')
         self.loop_i += 1
-        
+
     def sleep(self):
         configs.logger.info(f'Doing loop cooldown sleep for {configs.loop_cooldown_sec}s\n')
         time.sleep(configs.loop_cooldown_sec)
@@ -77,41 +77,76 @@ class Loop:
 
 class State:
     def __init__(self, loop: Loop):
-        self.last_modified_filepath = make_path('cache', 'd_last_modified.json')
-        self.last_modified: dict[str, dict[int, float]] = dict()
+        """
+        Manages persistent state across scraper runs.
+
+        - thread_cache: Maps board -> thread_id -> last_modified timestamp from catalog JSON.
+        - http_cache: Maps URL -> HTTP Last-Modified header string for conditional requests.
+        - thread_stats: Maps board -> thread_id -> stats dict (replies, images, most_recent_reply_no).
+        """
+        self.thread_cache_filepath = make_path('cache', 'thread_cache.json')
+        self.thread_cache: dict[str, dict[int, float]] = dict()
+
+        self.http_cache_filepath = make_path('cache', 'http_cache.json')
+        self.http_cache: dict[str, str] = dict()
+
+        self.thread_stats_filepath = make_path('cache', 'thread_stats.json')
+        self.thread_stats: dict[str, dict[int, dict]] = dict()
 
         self.loop = loop
 
         self.read()
 
-
     @property
     def ignore_last_modified(self) -> bool:
-        return self.loop.is_first_loop and configs.ignore_last_modified
-
+        return self.loop.is_first_loop and configs.ignore_thread_cache
 
     def save(self):
         '''writes every cache'''
-        write_json_obj_to_file(self.last_modified_filepath, self.last_modified)
-
+        try:
+            write_json_obj_to_file(self.thread_cache_filepath, self.thread_cache)
+            write_json_obj_to_file(self.http_cache_filepath, self.http_cache)
+            write_json_obj_to_file(self.thread_stats_filepath, self.thread_stats)
+        except Exception as e:
+            configs.logger.error(f'Failed to save state: {e}')
+            configs.logger.error(traceback.format_exc())
+            raise e
 
     def read(self):
         '''reads in every cache'''
-        self.last_modified = self._get_cached_d_last_modified()
+        self.thread_cache = self.get_cached_thread_cache()
+        self.http_cache = read_json(self.http_cache_filepath) or dict()
+        self.thread_stats = read_json(self.thread_stats_filepath) or dict()
 
-
-    def _get_cached_d_last_modified(self):
+    def get_cached_thread_cache(self):
         """{g: {123: 1717755968, 124: 1717755999}, ck: {456: 1717755968}, ...}"""
-        last_modified = read_json(self.last_modified_filepath)
+        thread_cache = read_json(self.thread_cache_filepath)
 
-        if not last_modified:
+        if not thread_cache:
             return dict()
 
         return {
             board: {int(tid): lm for tid, lm in tid_2_last_modified.items()}
-            for board, tid_2_last_modified in last_modified.items()
+            for board, tid_2_last_modified in thread_cache.items()
         }
 
+    def prune_old_threads(self, board: str):
+        # Don't let the dict grow over N entries per board.
+        if board not in self.thread_cache:
+            return
+
+        N = 200
+        board_cache = self.thread_cache[board]
+        if (count := len(board_cache)) > N:
+            # In case of multiple stickies, or similar special threads, we delete the extras, plus M oldest threads
+            M = count - N + 10
+            tid_timestamp_pairs = [(tid, board_cache.get(tid) or 0.0) for tid in board_cache.keys()]
+            tid_timestamp_pairs.sort(key=self.get_timestamp_from_pair)
+            for stale_id, _ in tid_timestamp_pairs[:M]:
+                del board_cache[stale_id] # prune
+
+    def get_timestamp_from_pair(self, pair: tuple[int, float]) -> float:
+        return pair[1]
 
     def is_thread_modified(self, board: str, thread: dict) -> bool:
         """
@@ -121,51 +156,104 @@ class State:
         tid = thread['no']
         thread_last_modified = thread.get('last_modified')
 
-        if board not in self.last_modified:
-            self.last_modified[board] = dict()
+        if board not in self.thread_cache:
+            self.thread_cache[board] = dict()
 
         # should come before entry pruning
-        thread_last_modified_cached = self.last_modified[board].get(tid)
-
-        # Update the thread's last modified time in d_last_modified.
-        self.last_modified[board][tid] = thread_last_modified
-
-        # Don't let the dict grow over N entries per board.
-        N = 200
-        if (count := len(self.last_modified[board])) > N:
-            # In case of multiple stickies, or similar special threads, we delete the extras, plus M oldest threads
-            M = count - N + 10
-            temp_ids = sorted(self.last_modified[board], key=lambda tid: self.last_modified[board][tid])
-            for stale_id in temp_ids[:M]:
-                del self.last_modified[board][stale_id] # prune
+        thread_last_modified_cached = self.thread_cache[board].get(tid)
 
         # last_modified changed
         if thread_last_modified and thread_last_modified_cached and thread_last_modified != thread_last_modified_cached:
+            # Update the thread's last modified time in thread_cache.
+            self.thread_cache[board][tid] = thread_last_modified
             return True
 
         # new thread
         if thread_last_modified_cached is None:
+            # Update the thread's last modified time in thread_cache.
+            self.thread_cache[board][tid] = thread_last_modified
             return True
+
+        # Update the thread's last modified time even if unchanged
+        self.thread_cache[board][tid] = thread_last_modified
 
         return False
 
+    def get_thread_stats(self, board: str, tid: int) -> dict | None:
+        if board not in self.thread_stats:
+            return None
+        return self.thread_stats[board].get(tid)
+
+    def set_thread_stats(self, board: str, tid: int, replies: int | None, images: int | None, most_recent_reply_no: int | None):
+        if board not in self.thread_stats:
+            self.thread_stats[board] = dict()
+        if tid not in self.thread_stats[board]:
+            self.thread_stats[board][tid] = dict()
+        if replies is not None:
+            self.thread_stats[board][tid]['replies'] = replies
+        if images is not None:
+            self.thread_stats[board][tid]['images'] = images
+        if most_recent_reply_no is not None:
+            self.thread_stats[board][tid]['most_recent_reply_no'] = most_recent_reply_no
+
+    def get_http_last_modified(self, url: str) -> str | None:
+        return self.http_cache.get(url)
+
+    def set_http_last_modified(self, url: str, last_modified: str | None):
+        if last_modified:
+            self.http_cache[url] = last_modified
+            if len(self.http_cache) > 500:
+                oldest_key = next(iter(self.http_cache))
+                del self.http_cache[oldest_key]
+        elif url in self.http_cache:
+            del self.http_cache[url]
+
+    def get_thread_url_last_modified(self, board: str, tid: int) -> str | None:
+        url = configs.url_thread.format(board=board, thread_id=tid)
+        return self.get_http_last_modified(url)
+
 
 class Fetcher:
-    def __init__(self):
+    def __init__(self, state: State | None = None):
         self.session: Session = Session()
+        self.state = state
 
-    def fetch_json(self, url, headers=None, request_cooldown_sec: float=None, add_random: bool=False) -> dict:
-        resp = self.session.get(url, headers=headers)
+    def fetch_json(self, url, headers=None, request_cooldown_sec: float=None, add_random: bool=False) -> dict | None:
+        request_headers = dict(headers) if headers else dict()
+
+        if not configs.ignore_http_cache and self.state:
+            last_modified = self.state.get_http_last_modified(url)
+            if last_modified:
+                request_headers['If-Modified-Since'] = last_modified
+
+        resp = self.session.get(url, headers=request_headers, timeout=10)
 
         if request_cooldown_sec:
             sleep(request_cooldown_sec, add_random=add_random)
 
+        if resp.status_code == 304:
+            if not configs.ignore_http_cache and self.state:
+                last_modified_header = resp.headers.get('Last-Modified')
+                if last_modified_header:
+                    self.state.set_http_last_modified(url, last_modified_header)
+            return
+
         if resp.status_code == 200:
-            return resp.json()
+            if not configs.ignore_http_cache and self.state:
+                last_modified_header = resp.headers.get('Last-Modified')
+                if last_modified_header:
+                    self.state.set_http_last_modified(url, last_modified_header)
+            try:
+                return resp.json()
+            except ValueError:
+                configs.logger.warning(f'Failed to parse JSON from {url}')
+                return dict()
 
         return dict()
 
     def sleep(self):
+        # Refresh session periodically to prevent stale connections
+        # Also refresh if loop cooldown is long enough to warrant it
         if configs.loop_cooldown_sec >= 15.0:
             self.session.close()
             self.session = Session()
@@ -204,7 +292,7 @@ class Catalog:
         if not self.catalog:
             configs.logger.info(f'[{self.board}] Catalog empty')
             return False
-        
+
         self.set_tid_2_thread()
         self.validate_threads()
 
@@ -227,11 +315,13 @@ class Catalog:
 
 
 class Posts:
-    def __init__(self, db: RitualDb, fetcher: Fetcher, board: str, tid_2_thread: dict[int, dict]):
+    def __init__(self, db: RitualDb, fetcher: Fetcher, board: str, tid_2_thread: dict[int, dict], state: State, catalog: 'Catalog'):
         self.db = db
         self.fetcher = fetcher
         self.board = board
         self.tid_2_thread = tid_2_thread
+        self.state = state
+        self.catalog = catalog
         self.tid_2_posts: dict[int, list[dict]] = dict()
         self.pid_2_post: dict[int, dict] = dict()
 
@@ -246,31 +336,66 @@ class Posts:
         - fetches posts from api
         - validates posts from api
         - marks deleted posts as deleted in the database
+        - uses catalog-based incremental updates when possible
         '''
-
-        # TODO: add better support for marking OPs as deleted
 
         pids_deleted = []
         tids_deleted = []
+        catalog_update_count = 0
+        full_fetch_count = 0
 
         for tid in self.tid_2_thread:
+            thread_data = self.tid_2_thread[tid]
+            thread_stats = self.state.get_thread_stats(self.board, tid)
+            last_replies = self.catalog.tid_2_last_replies.get(tid)
+
+            if self.can_use_catalog_update(thread_data, thread_stats, last_replies):
+                posts_to_add = self.process_catalog_update(tid, thread_data, last_replies, thread_stats)
+                if posts_to_add:
+                    catalog_update_count += 1
+                    existing_pids = self.get_existing_posts_for_thread(tid)
+
+                    if tid not in self.tid_2_posts:
+                        self.tid_2_posts[tid] = []
+
+                    for post in posts_to_add:
+                        if post['no'] not in existing_pids:
+                            self.tid_2_posts[tid].append(post)
+
+                    if self.tid_2_posts[tid]:
+                        most_recent_reply_no = max(p['no'] for p in self.tid_2_posts[tid])
+                    else:
+                        most_recent_reply_no = thread_stats.get('most_recent_reply_no') if thread_stats else None
+
+                    self.state.set_thread_stats(
+                        self.board, tid,
+                        replies=thread_data.get('replies'),
+                        images=thread_data.get('images'),
+                        most_recent_reply_no=most_recent_reply_no
+                    )
+                    continue
+
+            url = configs.url_thread.format(board=self.board, thread_id=tid)
             thread = self.fetcher.fetch_json(
-                configs.url_thread.format(board=self.board, thread_id=tid),
+                url,
                 headers=configs.headers,
                 request_cooldown_sec=configs.request_cooldown_sec,
                 add_random=configs.add_random,
             )
+
+            if thread is None:
+                configs.logger.info(f'[{self.board}] Thread [{tid}] not modified (304)')
+                continue
 
             if not thread:
                 configs.logger.info(f'[{self.board}] Lost Thread [{tid}]')
                 tids_deleted.append(tid)
                 continue
 
+            full_fetch_count += 1
             configs.logger.info(f'[{self.board}] Found thread [{tid}]')
 
             self.validate_posts(thread['posts'])
-
-            # TODO: one query versus len(self.tid_2_thread) queries
 
             pids_found = {post['no'] for post in thread['posts']}
             pids_all = self.db.get_pids_by_tid(self.board, tid)
@@ -281,6 +406,19 @@ class Posts:
 
             self.tid_2_posts[tid] = thread['posts']
 
+            most_recent_reply_no = max((post['no'] for post in thread['posts']), default=None)
+            self.state.set_thread_stats(
+                self.board, tid,
+                replies=thread_data.get('replies'),
+                images=thread_data.get('images'),
+                most_recent_reply_no=most_recent_reply_no
+            )
+
+        if catalog_update_count > 0:
+            configs.logger.info(f'[{self.board}] Updated {catalog_update_count} thread(s) using catalog data')
+        if full_fetch_count > 0:
+            configs.logger.info(f'[{self.board}] Fetched {full_fetch_count} thread(s) fully')
+
         if pids_deleted:
             self.db.set_posts_deleted(self.board, pids_deleted)
 
@@ -288,6 +426,62 @@ class Posts:
             self.db.set_threads_deleted(self.board, tids_deleted)
 
         self.set_pid_2_post()
+
+    def can_use_catalog_update(self, thread_data: dict, thread_stats: dict | None, last_replies: list[dict] | None) -> bool:
+        if not last_replies or not isinstance(last_replies, list) or len(last_replies) == 0:
+            return False
+
+        if not thread_stats:
+            return False
+
+        if thread_stats.get('most_recent_reply_no') is None:
+            return False
+
+        current_replies = thread_data.get('replies', 0)
+        cached_replies = thread_stats.get('replies', 0)
+
+        if current_replies <= cached_replies:
+            return False
+
+        reply_diff = current_replies - cached_replies
+        if reply_diff > len(last_replies):
+            return False
+
+        last_seen = thread_stats.get('most_recent_reply_no')
+        has_last_seen = any(reply.get('no') == last_seen for reply in last_replies)
+
+        if not has_last_seen:
+            return False
+
+        new_replies = [r for r in last_replies if r.get('no', 0) > last_seen]
+        if len(new_replies) != reply_diff:
+            return False
+
+        return True
+
+    def process_catalog_update(self, tid: int, thread_data: dict, last_replies: list[dict], thread_stats: dict) -> list[dict]:
+        last_seen = thread_stats.get('most_recent_reply_no')
+        new_replies = [r for r in last_replies if r.get('no', 0) > last_seen]
+
+        posts_to_add = []
+        for reply in new_replies:
+            try:
+                ChanPost(**reply)
+                posts_to_add.append(reply)
+            except Exception as e:
+                configs.logger.warning(f'[{self.board}] Invalid post in catalog update for thread [{tid}]: {e}')
+                configs.logger.error(traceback.format_exc())
+                raise e
+
+        if posts_to_add:
+            configs.logger.info(f'[{self.board}] Catalog update for thread [{tid}]: {len(posts_to_add)} new post(s)')
+
+        return posts_to_add
+
+    def get_existing_posts_for_thread(self, tid: int) -> set[int]:
+        if tid in self.tid_2_posts:
+            return {p['no'] for p in self.tid_2_posts[tid]}
+        return set(self.db.get_pids_by_tid(self.board, tid))
 
 
     def set_pid_2_post(self):
@@ -317,14 +511,16 @@ class Filter:
         self.full_pids: set[int] = set()
         self.thumb_pids: set[int] = set()
 
+        self.md5_2_media_filename: dict[str, str] = dict()
+        self.banned_hashes: set[str] = set()
+
     def set_tid_2_posts(self, tid_2_posts: dict[int, list[dict]]):
         self.tid_2_posts = tid_2_posts
 
 
     def filter_catalog(self, catalog: Catalog) -> dict[int, dict]:
         '''
-        Fitlers based on,
-        - sticky post
+        Filters based on,
         - title
         - comments
         - last modified time
@@ -335,13 +531,13 @@ class Filter:
             for thread in page['threads']:
                 tid = thread['no']
 
-                if post_is_sticky(thread):
-                    continue
+                subject = thread.get('sub', '')
+                comment = thread.get('com', '')
 
-                subject = html.unescape(thread.get('sub', ''))
-                comment = html.unescape(thread.get('com', ''))
+                subject_text = extract_text_from_html(subject)
+                comment_text = extract_text_from_html(comment)
 
-                if not self.should_archive(subject, comment):
+                if not self.should_archive(subject_text, comment_text):
                     continue
 
                 if self.state.ignore_last_modified:
@@ -354,6 +550,8 @@ class Filter:
                     continue
 
                 self.tid_2_thread[tid] = thread
+
+        self.state.prune_old_threads(self.board)
 
         msg = f'{not_modified_thread_count} thread(s) are unmodified. ' if not_modified_thread_count else ''
         if self.state.ignore_last_modified:
@@ -395,6 +593,42 @@ class Filter:
         return True
 
 
+    def is_media_needed(self, post: dict, pattern: str, media_type: MediaType) -> bool:
+        """
+        - Post text does not match pattern    -> skip download
+        - Hash banned                         -> skip download
+        - Hash archived + stored file exists  -> skip download
+        - Hash archived + stored file missing -> download
+        - Hash not archived + file missing    -> download
+        - Hash not archived + file exists     -> skip download
+        """
+        if isinstance(pattern, str) and not match_sub_and_com(post, pattern):
+            return False
+
+        if media_type == MediaType.full_media:
+            media_hash = post.get('md5')
+            if media_hash:
+                if media_hash in self.banned_hashes:
+                    return False
+
+                if media_hash in self.md5_2_media_filename:
+                    stored_filepath = get_filepath(
+                        configs.media_save_path,
+                        self.board,
+                        media_type,
+                        self.md5_2_media_filename[media_hash], # stored filename
+                    )
+                    if os.path.isfile(stored_filepath):
+                        return False
+
+        filename = get_filename(post, media_type)
+        filepath = get_filepath(configs.media_save_path, self.board, media_type, filename)
+
+        if os.path.isfile(filepath):
+            return False
+
+        return True
+
     def get_pids_for_download(self):
         make_thumbnails = configs.make_thumbnails
         dl_full_media = configs.boards[self.board].get('dl_full_media')
@@ -402,43 +636,36 @@ class Filter:
         dl_thumbs_op = configs.boards[self.board].get('dl_thumbs_op')
         dl_thumbs = configs.boards[self.board].get('dl_thumbs')
 
-        def is_needed(post: dict, pattern: str, media_type: MediaType) -> bool:
-            if isinstance(pattern, str) and not match_sub_and_com(post, pattern):
-                return False
+        media_hashes = []
+        for posts in self.tid_2_posts.values():
+            for post in posts:
+                if post_has_file(post) and post.get('md5'):
+                    media_hashes.append(post['md5'])
 
-            filename = get_filename(post, media_type)
-            filepath = get_filepath(configs.media_save_path, self.board, media_type, filename)
+        self.md5_2_media_filename, self.banned_hashes = self.db.get_media_hash_info(self.board, media_hashes) if media_hashes else (dict(), set())
 
-            # os.path.isfile is cheap, no need for a cache
-            if os.path.isfile(filepath):
-                return False
-            
-            return True
-
-        for tid, posts in self.tid_2_posts.items():            
+        for tid, posts in self.tid_2_posts.items():
             for post in posts:
                 if not post_has_file(post):
                     continue
 
                 if tid == (pid := post['no']):
                     if dl_full_media_op:
-                        if is_needed(post, dl_full_media_op, MediaType.full_media):
+                        if self.is_media_needed(post, dl_full_media_op, MediaType.full_media):
                             self.full_pids.add(pid)
 
-                    # "if we're not making OP thumbs [with Convert or FFMPEG] from OP full media"
                     if not (make_thumbnails and dl_full_media_op):
                         if dl_thumbs_op:
-                            if is_needed(post, dl_thumbs_op, MediaType.thumbnail):
+                            if self.is_media_needed(post, dl_thumbs_op, MediaType.thumbnail):
                                 self.thumb_pids.add(pid)
                 else:
                     if dl_full_media:
-                        if is_needed(post, dl_full_media, MediaType.full_media):
+                        if self.is_media_needed(post, dl_full_media, MediaType.full_media):
                             self.full_pids.add(pid)
 
-                    # "if we're not making thumbs [with Convert or FFMPEG] from full media"
                     if not (make_thumbnails and dl_full_media):
                         if dl_thumbs:
-                            if is_needed(post, dl_thumbs, MediaType.thumbnail):
+                            if self.is_media_needed(post, dl_thumbs, MediaType.thumbnail):
                                 self.thumb_pids.add(pid)
 
 
@@ -447,15 +674,24 @@ class Filter:
         self.get_pids_for_download()
 
         for pid in self.full_pids:
-            self._download_post_file(pid_2_post[pid], MediaType.full_media)
+            if pid not in pid_2_post:
+                configs.logger.info(f'[{self.board}] Post {pid} not found in pid_2_post, skipping full media download')
+                continue
+            self.download_post_file(pid_2_post[pid], MediaType.full_media)
 
         for pid in self.thumb_pids:
-            self._download_post_file(pid_2_post[pid], MediaType.thumbnail)
+            if pid not in pid_2_post:
+                configs.logger.info(f'[{self.board}] Post {pid} not found in pid_2_post, skipping thumbnail download')
+                continue
+            self.download_post_file(pid_2_post[pid], MediaType.thumbnail)
 
 
-    def _download_post_file(self, post: dict, media_type: MediaType) -> bool:
+    def download_post_file(self, post: dict, media_type: MediaType) -> bool:
         url, filename = get_url_and_filename(configs, self.board, post, media_type)
         filepath = get_filepath(configs.media_save_path, self.board, media_type, filename)
+
+        expected_size = post.get('fsize') if media_type == MediaType.full_media else None
+        expected_md5 = post.get('md5') if media_type == MediaType.full_media else None
 
         is_success = download_file(
             url,
@@ -466,6 +702,8 @@ class Filter:
             headers=configs.headers,
             logger=configs.logger,
             session=self.fetcher.session,
+            expected_size=expected_size,
+            expected_md5=expected_md5,
         )
 
         if not is_success:
@@ -473,44 +711,75 @@ class Filter:
             return False
 
         configs.logger.info(f'[{self.board}] Downloaded [{media_type.value}] {filepath}')
-        if media_type == MediaType.full_media and configs.make_thumbnails:
-            thumb_path = get_filepath(configs.media_save_path, self.board, MediaType.thumbnail, get_fs_filename_thumbnail(post))
-            sleep(0.1, add_random=configs.add_random)
-            create_thumbnail(post, filepath, thumb_path, logger=configs.logger)
+
+        if media_type == MediaType.full_media:
+            media_hash = post.get('md5')
+            if media_hash:
+                media = get_fs_filename_full_media(post)
+                self.db.upsert_image(self.board, media_hash, media)
+
+            if configs.make_thumbnails:
+                thumb_path = get_filepath(configs.media_save_path, self.board, MediaType.thumbnail, get_fs_filename_thumbnail(post))
+                sleep(0.1, add_random=configs.add_random)
+                create_thumbnail(post, filepath, thumb_path, logger=configs.logger)
+
+
+def process_board(board: str, db: RitualDb, fetcher: Fetcher, loop: Loop, state: State):
+    loop.set_start_time()
+
+    catalog = Catalog(fetcher, board)
+    if not catalog.fetch_catalog():
+        return
+
+    filter = Filter(fetcher, db, board, state)
+    filter.filter_catalog(catalog)
+
+    posts = Posts(db, fetcher, board, filter.tid_2_thread, state, catalog)
+    posts.fetch_posts()
+    posts.save_posts()
+
+    filter.download_media(posts.tid_2_posts, posts.pid_2_post)
+
+    loop.set_board_duration_minutes(board)
 
 
 def main():
     Init()
     db = RitualDb(configs.db_path)
-    fetcher = Fetcher()
     loop = Loop()
     state = State(loop)
+    fetcher = Fetcher(state)
 
+    critical_error_count = 0
     while True:
-        for board in tqdm.tqdm(configs.boards, disable=configs.disable_tqdm):
-            loop.set_start_time()
+        try:
+            for board in configs.boards:
+                process_board(board, db, fetcher, loop, state)
 
-            catalog = Catalog(fetcher, board)
-            if not catalog.fetch_catalog():
-                continue
+            fetcher.sleep()
+            state.save()
 
-            filter = Filter(fetcher, db, board, state)
-            filter.filter_catalog(catalog)
+            loop.increment_loop()
+            loop.log_board_durations()
+            loop.sleep()
 
-            posts = Posts(db, fetcher, board, filter.tid_2_thread)
-            posts.fetch_posts()
-            posts.save_posts()
+        except KeyboardInterrupt:
+            configs.logger.info('Received interrupt signal, saving state and exiting...')
+            state.save()
+            db.close()
+            break
 
-            filter.download_media(posts.tid_2_posts, posts.pid_2_post)
+        except Exception as e:
+            configs.logger.error(f'Critical error in main loop: {e}')
+            configs.logger.error(traceback.format_exc())
+            state.save()
 
-            loop.set_board_duration_minutes(board)
+            critical_error_count += 1
+            if critical_error_count >= 3:
+                configs.logger.error('Critical error count reached 3, exiting...')
+                break
 
-        fetcher.sleep()
-        state.save()
-
-        loop.increment_loop()
-        loop.log_board_durations()
-        loop.sleep()
+            sleep(60)
 
 
 if __name__=='__main__':
