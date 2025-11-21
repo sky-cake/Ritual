@@ -11,6 +11,7 @@ add_random = False # add random sleep intervals
 ignore_thread_cache = True # on restarts, ignore thread cache and go through all threads
 ignore_http_cache = False # always ignore http cache and go through all threads (used for testing)
 
+download_files_with_mismatched_md5 = False # True will gather the files, when md5s dont align, but it can present a security gap.
 
 media_save_path = make_path('media')
 db_path = make_path('ritual.db') # sqlite

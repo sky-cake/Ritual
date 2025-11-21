@@ -434,7 +434,8 @@ def download_file(
     logger: logging.Logger | None=None,
     session: Session | None=None,
     expected_size: int | None=None,
-    expected_md5: str | None=None
+    expected_md5: str | None=None,
+    download_files_with_mismatched_md5: bool=False,
 ) -> bool:
     ts = video_cooldown_sec if is_video_path(filepath) else image_cooldown_sec if is_image_path(filepath) else 2.0
 
@@ -456,8 +457,9 @@ def download_file(
     if expected_md5:
         file_hash = get_md5_hash_bytes(content)
         if file_hash != expected_md5:
-            log_warning(logger, f'File hash mismatch {url=} {filepath=} expected={expected_md5} got={file_hash}')
-            return False
+            if download_files_with_mismatched_md5:
+                log_warning(logger, f'File hash mismatch {url=} {filepath=} expected={expected_md5} got={file_hash}')
+            return download_files_with_mismatched_md5
 
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     with open(filepath, 'wb') as f:

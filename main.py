@@ -703,6 +703,7 @@ class Filter:
             session=self.fetcher.session,
             expected_size=expected_size,
             expected_md5=expected_md5,
+            download_files_with_mismatched_md5=configs.download_files_with_mismatched_md5,
         )
 
         if not is_success:
