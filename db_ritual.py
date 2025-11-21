@@ -115,7 +115,7 @@ class RitualDb(SqliteDb):
 
         sql = f"""
             insert into `{board}_images` (media_hash, media, total, banned)
-            values (?, ?, ?, 1, 0)
+            values (?, ?, 1, 0)
             on conflict(media_hash) do update set
                 total = total + 1,
                 media = coalesce(media, excluded.media)
