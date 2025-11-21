@@ -425,69 +425,46 @@ def get_md5_hash_bytes(content: bytes) -> str:
     return base64.b64encode(hash_obj.digest()).decode('ascii')
 
 
-def download_file(url: str, filepath: str, video_cooldown_sec: float=3.2, image_cooldown_sec: float=2.2, add_random: bool=False, headers: dict=None, logger: logging.Logger=None, session: Session=None, expected_size: int | None=None, expected_md5: str | None=None):
-    if is_video_path(filepath):
-        ts = [video_cooldown_sec, 6.0, 10.0]
-        max_retries_404 = 1
-        max_retries_other = 2
-    elif is_image_path(filepath):
-        ts = [image_cooldown_sec, 6.0, 10.0]
-        max_retries_404 = 1
-        max_retries_other = 2
-    else:
-        raise ValueError(filepath)
+def download_file(
+    url: str,
+    filepath: str,
+    video_cooldown_sec: float=3.2,
+    image_cooldown_sec: float=2.2,
+    headers: dict | None=None,
+    logger: logging.Logger | None=None,
+    session: Session | None=None,
+    expected_size: int | None=None,
+    expected_md5: str | None=None
+) -> bool:
+    ts = video_cooldown_sec if is_video_path(filepath) else image_cooldown_sec if is_image_path(filepath) else 2.0
 
-    retry_count = 0
+    resp = session.get(url, headers=headers) if session else requests_get(url, headers=headers)
 
-    while retry_count < max_retries_other:
-        resp = session.get(url, headers=headers) if session else requests_get(url, headers=headers)
+    if resp.status_code != 200:
+        log_warning(logger, f'{url=} {resp.status_code=}')
+        return False
 
-        if resp.status_code == 404:
-            if retry_count >= max_retries_404:
-                log_warning(logger, f'Max 404 retries exceeded {url=} {filepath=}')
-                return False
-        elif resp.status_code != 200:
-            log_warning(logger, f'{url=} {resp.status_code=}')
-            if retry_count >= max_retries_other:
-                log_warning(logger, f'Max retries exceeded {url=} {filepath=}')
-                return False
-        elif resp.status_code == 200 and resp.content:
-            content = resp.content
+    if not resp.content:
+        return False
 
-            if expected_size and len(content) != expected_size:
-                post_age_seconds = None
-                if expected_size:
-                    try:
-                        tim = int(os.path.basename(filepath).split('.')[0].rstrip('s'))
-                        post_age_seconds = time.time() - (tim / 1000)
-                    except:
-                        pass
+    content = resp.content
 
-                if post_age_seconds and post_age_seconds < 864000:
-                    resp_size = len(content)
-                    if resp_size > expected_size:
-                        log_warning(logger, f'File size large than expected {url=} {filepath=} expected={expected_size} got={resp_size}. Skipping.')
-                        return False
+    if len(content) > expected_size:
+        log_warning(logger, f'File size large than expected {url=} {filepath=} expected={expected_size} got={len(content)}. Skipping.')
+        return False
 
-            if expected_md5:
-                file_hash = get_md5_hash_bytes(content)
+    if expected_md5:
+        file_hash = get_md5_hash_bytes(content)
+        if file_hash != expected_md5:
+            log_warning(logger, f'File hash mismatch {url=} {filepath=} expected={expected_md5} got={file_hash}')
+            return False
 
-                if file_hash != expected_md5:
-                    log_warning(logger, f'File hash mismatch {url=} {filepath=} expected={expected_md5} got={file_hash}')
-                    retry_count += 1
-                    sleep(ts[min(retry_count, len(ts) - 1)], add_random=add_random)
-                    continue
-
-            os.makedirs(os.path.dirname(filepath), exist_ok=True)
-            with open(filepath, 'wb') as f:
-                f.write(content)
-            return True
-
-        retry_count += 1
-        sleep(ts[min(retry_count, len(ts) - 1)], add_random=add_random)
-
-    log_warning(logger, f'Max retries exceeded {url=} {filepath=}')
-    return False
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    with open(filepath, 'wb') as f:
+        f.write(content)
+    
+    sleep(ts)
+    return True
 
 
 def is_video_path(path: str) -> bool:

@@ -698,7 +698,6 @@ class Filter:
             filepath,
             video_cooldown_sec=configs.video_cooldown_sec,
             image_cooldown_sec=configs.image_cooldown_sec,
-            add_random=configs.add_random,
             headers=configs.headers,
             logger=configs.logger,
             session=self.fetcher.session,
