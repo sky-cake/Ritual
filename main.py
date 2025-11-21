@@ -236,7 +236,8 @@ class Fetcher:
                 last_modified_header = resp.headers.get('Last-Modified')
                 if last_modified_header:
                     self.state.set_http_last_modified(url, last_modified_header)
-            return
+            configs.logger.warning(f'Catalog not modified (304)')
+            return dict()
 
         if resp.status_code == 200:
             if not configs.ignore_http_cache and self.state:
