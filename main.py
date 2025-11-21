@@ -249,6 +249,7 @@ class Fetcher:
                 configs.logger.warning(f'Failed to parse JSON from {url}')
                 return dict()
 
+        configs.logger.warning(f'Failed to get JSON {resp.status_code=}')
         return dict()
 
     def sleep(self):
@@ -290,7 +291,7 @@ class Catalog:
         configs.logger.info(f'[{self.board}] Downloaded catalog')
 
         if not self.catalog:
-            configs.logger.info(f'[{self.board}] Catalog empty')
+            configs.logger.warning(f'[{self.board}] Catalog empty {self.catalog}')
             return False
 
         self.set_tid_2_thread()
