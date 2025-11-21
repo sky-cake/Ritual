@@ -96,7 +96,9 @@ CREATE TABLE IF NOT EXISTS `%%BOARD%%_deleted` (
     UNIQUE (num)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_%%BOARD%%_num ON `%%BOARD%%` (num);
+DROP INDEX IF EXISTS idx_%%BOARD%%_num;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_%%BOARD%%_num_subnum ON `%%BOARD%%` (num, subnum);
+
 CREATE INDEX IF NOT EXISTS idx_%%BOARD%%_media_id ON `%%BOARD%%` (media_id);
 CREATE INDEX IF NOT EXISTS idx_%%BOARD%%_thread_num ON `%%BOARD%%` (thread_num);
 CREATE INDEX IF NOT EXISTS idx_%%BOARD%%_timestamp ON `%%BOARD%%` (timestamp);
