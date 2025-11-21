@@ -228,7 +228,7 @@ ExtLiteral = Literal['.jpg', '.png', '.gif', '.pdf', '.swf', '.webm', '.mp4']
 CapcodeLiteral = Literal['mod', 'admin', 'admin_highlight', 'manager', 'developer', 'founder']
 
 ShortStr = Annotated[str, Field(min_length=0, max_length=512)]
-LongStr = Annotated[str, Field(min_length=0, max_length=8192)]
+LongStr = Annotated[str, Field(min_length=0, max_length=16_384)]
 
 
 class BasePost(BaseModel):
