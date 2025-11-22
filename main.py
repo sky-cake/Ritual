@@ -756,6 +756,7 @@ def main():
         try:
             for board in configs.boards:
                 process_board(board, db, fetcher, loop, state)
+                db.save()
 
             fetcher.sleep()
             state.save()
