@@ -375,6 +375,7 @@ class Posts:
                         images=thread_data.get('images'),
                         most_recent_reply_no=most_recent_reply_no
                     )
+                    self.save_thread_stats(tid)
                     continue
 
             url = configs.url_thread.format(board=self.board, thread_id=tid)
@@ -415,6 +416,7 @@ class Posts:
                 images=thread_data.get('images'),
                 most_recent_reply_no=most_recent_reply_no
             )
+            self.save_thread_stats(tid)
 
         if catalog_update_count > 0:
             configs.logger.info(f'[{self.board}] Updated {catalog_update_count} thread(s) using catalog data')
@@ -491,6 +493,40 @@ class Posts:
             for post in posts:
                 self.pid_2_post[post['no']] = post
 
+    def save_thread_stats(self, tid: int):
+        thread_stats = self.state.get_thread_stats(self.board, tid)
+        if not thread_stats:
+            return
+
+        nreplies = thread_stats.get('replies')
+        nimages = thread_stats.get('images')
+        if nreplies is None and nimages is None:
+            return
+
+        thread_data = self.tid_2_thread.get(tid, {})
+        time_op = thread_data.get('time', 0)
+        time_last = time_op
+
+        posts = self.tid_2_posts.get(tid, [])
+        if posts:
+            timestamps = [post.get('time', 0) for post in posts if post.get('time')]
+            if timestamps:
+                time_last = max(timestamps)
+
+        d = {
+            'thread_num': tid,
+            'time_op': time_op,
+            'time_last': time_last,
+            'time_bump': time_last,
+            'time_ghost': None,
+            'time_ghost_bump': None,
+            'time_last_modified': thread_data.get('last_modified', 0),
+            'nreplies': nreplies if nreplies is not None else 0,
+            'nimages': nimages if nimages is not None else 0,
+            'sticky': 1 if thread_data.get('sticky', 0) else 0,
+            'locked': 1 if thread_data.get('closed', 0) else 0,
+        }
+        self.db.upsert_thread_stats(self.board, d)
 
     def save_posts(self):
         self.db.upsert_posts(self.board, self.pid_2_post.values())
@@ -756,7 +792,6 @@ def main():
         try:
             for board in configs.boards:
                 process_board(board, db, fetcher, loop, state)
-                db.save()
 
             fetcher.sleep()
             state.save()

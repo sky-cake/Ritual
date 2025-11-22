@@ -131,3 +131,40 @@ class RitualDb(SqliteDb):
             posts_to_insert.append(d_board)
 
         self.upsert_many(board, posts_to_insert, 'num, subnum')
+
+    def upsert_thread_stats(self, board: str, thread_stats: dict):
+        sql = f"""
+            insert into `{board}_threads` (
+                thread_num, time_op, time_last, time_bump, time_ghost, time_ghost_bump,
+                time_last_modified, nreplies, nimages, sticky, locked
+            )
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            on conflict(thread_num) do update set
+                time_op = excluded.time_op,
+                time_last = excluded.time_last,
+                time_bump = excluded.time_bump,
+                time_ghost = excluded.time_ghost,
+                time_ghost_bump = excluded.time_ghost_bump,
+                time_last_modified = excluded.time_last_modified,
+                nreplies = excluded.nreplies,
+                nimages = excluded.nimages,
+                sticky = excluded.sticky,
+                locked = excluded.locked
+        """
+        self.run_query_tuple(
+            sql,
+            params=(
+                thread_stats['thread_num'],
+                thread_stats['time_op'],
+                thread_stats['time_last'],
+                thread_stats['time_bump'],
+                thread_stats.get('time_ghost'),
+                thread_stats.get('time_ghost_bump'),
+                thread_stats['time_last_modified'],
+                thread_stats['nreplies'],
+                thread_stats['nimages'],
+                thread_stats['sticky'],
+                thread_stats['locked'],
+            ),
+            commit=True
+        )
