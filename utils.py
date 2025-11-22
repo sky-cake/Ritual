@@ -140,6 +140,9 @@ def get_fs_filename_thumbnail(post: dict) -> str:
 def create_thumbnail(post: dict, full_path: str, thumb_path: str, logger=None):
     if not post_has_file(post):
         return
+    
+    if not os.path.isfile(full_path):
+        return
 
     if is_post_media_file_video(post):
         create_thumbnail_from_video(full_path, thumb_path, logger=logger)
@@ -337,10 +340,11 @@ def sleep(t: int, add_random: bool=False):
     time.sleep(t)
 
 
-def log_warning(logger: logging.Logger, message: str):
+def log_util(logger: logging.Logger, message: str):
     if logger:
         logger.warning(message)
-    print(f'Warning: {message}')
+    else:
+        print(message)
 
 
 class TextExtractor(html.parser.HTMLParser):
@@ -442,7 +446,7 @@ def download_file(
     resp = session.get(url, headers=headers) if session else requests_get(url, headers=headers)
 
     if resp.status_code != 200:
-        log_warning(logger, f'{url=} {resp.status_code=}')
+        log_util(logger, f'{url=} {resp.status_code=}')
         return False
 
     if not resp.content:
@@ -451,14 +455,14 @@ def download_file(
     content = resp.content
 
     if len(content) > expected_size:
-        log_warning(logger, f'File size large than expected {url=} {filepath=} expected={expected_size} got={len(content)}. Skipping.')
+        log_util(logger, f'File size large than expected {url=} {filepath=} expected={expected_size} got={len(content)}. Skipping.')
         return False
 
     if expected_md5:
         file_hash = get_md5_hash_bytes(content)
         if file_hash != expected_md5:
             if download_files_with_mismatched_md5:
-                log_warning(logger, f'File hash mismatch {url=} {filepath=} expected={expected_md5} got={file_hash}')
+                log_util(logger, f'Hashes differ: {url=} {filepath=} told={expected_md5} found={file_hash}')
             return download_files_with_mismatched_md5
 
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
