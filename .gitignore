@@ -14,3 +14,6 @@ cache/
 launch.json
 .pytest_cache/
 .venv/
+*.db-shm
+*.db-wal
+*.log
