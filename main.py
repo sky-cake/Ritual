@@ -767,14 +767,17 @@ def main():
 
         except KeyboardInterrupt:
             configs.logger.info('Received interrupt signal, saving state and exiting...')
+            
             state.save()
-            db.close()
+            db.save_and_close()
             break
 
         except Exception as e:
             configs.logger.error(f'Critical error in main loop: {e}')
             configs.logger.error(traceback.format_exc())
+            
             state.save()
+            db.save_and_close()
 
             critical_error_count += 1
             if critical_error_count >= 3:
