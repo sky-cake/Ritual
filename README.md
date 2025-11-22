@@ -14,7 +14,7 @@ Notable features include,
 
 ## Getting Started
 
-Ritual will create schemas for you.
+Ritual will create schemas for you. But note, in the future, when you need database tools, check out https://github.com/sky-cake/asagi-tables.
 
 1. Create a file called `configs.py` using `rename_to_configs.py`, and configure it.
 1. Create a venv and install dependencies,
