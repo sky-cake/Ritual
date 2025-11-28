@@ -12,7 +12,7 @@ ignore_thread_cache = True # on restarts, ignore thread cache and go through all
 ignore_http_cache = False # always ignore http cache and go through all threads (used for testing)
 
 
-# If md5 files from the API and the downloaded file do not match,
+# If the md5 from the API, and the md5 from the downloaded file do not match,
 # download anyway (True) or do not download (False)
 download_files_with_mismatched_md5 = False
 
