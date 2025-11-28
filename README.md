@@ -7,9 +7,9 @@ Notable features include,
 - Built using Python 3.12.
 - Uses the Asagi schema
 - Runs in a synchronous, step-by-step manner that's easy read.
-- `requests` and `pydantic` are the only dependencies.
+- Minimal dependencies.
 - Flexible configurations. You can choose whether you download text, thumbnails, and/or full media for each post.
-- Sqlite database.
+- Sqlite and MySQL database support.
 - Avoids downloading duplicate media files.
 
 ## Getting Started
@@ -18,9 +18,16 @@ Ritual will create schemas for you. But note, in the future, when you need datab
 
 1. Create a file called `configs.py` using `rename_to_configs.py`, and configure it.
 1. Create a venv and install dependencies,
-    - `python3.12 -m venv venv`
-    - `source venv/bin/activate`
-    - `python3.12 -m pip install -r requirements.txt`
+    - `uv venv`
+    - `source .venv/bin/activate`
+    - `uv pip install -r requirements.txt`
+    - Ritual depends on https://github.com/sky-cake/asagi-tables for Sqlite and MySQL schema creation.
+        - Please consult its documentation for installation and set up - it's very simple. Follow install option 2.
+        - Ritual will run the following asagi-table commands,
+            - `asagi base table add [board(s)]`
+            - `asagi base index add [board(s)]`
+            - `asagi side table add [board(s)]`
+            - `asagi side index add [board(s)]`
 1. `python3.12 main.py` to run the scraper.
 
 If you want the program to persist after leaving your shell, you can run Ritual using `screen`, likeso.

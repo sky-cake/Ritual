@@ -1,33 +1,39 @@
+import asyncio
 import configs
-from db_sqlite import SqliteDb, get_placeholders
-from utils import get_d_board, make_path
+from db_base import BaseDb
+from db_mysql import MysqlDb
+from db_sqlite import SqliteDb
+from utils import get_d_board
+from asagi_tables.main import execute_action
 
 
-class RitualDb(SqliteDb):
+class RitualDb:
+    def __init__(self, db: BaseDb):
+        self.db = db
 
-    def __init__(self, db_path, sql_echo=False):
-        super().__init__(db_path, sql_echo)
+        boards_list = list(configs.boards.keys())
+        side_tables = ['threads', 'images', 'deleted']
 
-        for board in configs.boards:
-            try:
-                self.run_query_tuple(f'SELECT * FROM `{board}` LIMIT 1;')
-                configs.logger.info(f'[{board}] Tables already exist.')
-            except Exception:
-                configs.logger.info(f'[{board}] Creating tables.')
+        async def setup_tables():
+            configs.logger.info('Creating base tables.')
+            await execute_action('base', 'table_add', boards_list)
 
-                with open(make_path('schema.sql')) as f:
-                    sql = f.read()
+            configs.logger.info('Creating side tables.')
+            await execute_action('side', 'table_add', boards_list, side_tables=side_tables)
 
-                sqls = sql.replace('%%BOARD%%', board).split(';')
+            configs.logger.info('Creating base indexes.')
+            await execute_action('base', 'index_add', boards_list)
 
-                for sql in sqls:
-                    self.run_query_tuple(sql)
+            configs.logger.info('Creating side indexes.')
+            await execute_action('side', 'index_add', boards_list, side_tables=side_tables)
 
-        self.save()
+        asyncio.run(setup_tables())
+        self.db.save()
 
 
     def get_pids_by_tid(self, board: str, tid: int) -> list[int]:
-        rows = self.run_query_tuple(f'select num from `{board}` where thread_num = ?', params=(tid,))
+        ph = self.db.placeholder
+        rows = self.db.run_query_tuple(f'select num from `{board}` where thread_num = {ph}', params=(tid,))
         return [row[0] for row in rows] if rows else []
 
 
@@ -35,16 +41,20 @@ class RitualDb(SqliteDb):
         if not pids:
             return
 
-        sql = f"update `{board}` set deleted = 1 where num in ({get_placeholders(pids)});"
-        self.run_query_tuple(sql, params=pids, commit=True)
+        ph = self.db.placeholder
+        placeholders = ','.join([ph] * len(pids))
+        sql = f"update `{board}` set deleted = 1 where num in ({placeholders});"
+        self.db.run_query_tuple(sql, params=tuple(pids), commit=True)
 
 
     def set_threads_deleted(self, board: str, tids: list[int]) -> None:
         if not tids:
             return
 
-        sql = f"update `{board}` set deleted = 1 where num in ({get_placeholders(tids)});"
-        self.run_query_tuple(sql, params=tids, commit=True)
+        ph = self.db.placeholder
+        placeholders = ','.join([ph] * len(tids))
+        sql = f"update `{board}` set deleted = 1 where num in ({placeholders});"
+        self.db.run_query_tuple(sql, params=tuple(tids), commit=True)
 
 
     def upsert_many(self, board: str, rows: list[dict], conflict_col: str, batch_size: int=500):
@@ -52,30 +62,33 @@ class RitualDb(SqliteDb):
             return
 
         keys = list(rows[0])
-        placeholder = '(' + get_placeholders(keys) + ')'
+        ph = self.db.placeholder
+        placeholder = '(' + ','.join([ph] * len(keys)) + ')'
         sql_cols = ', '.join(keys)
-        sql_conflict = ', '.join([f'{k}=excluded.{k}' for k in keys])
+        sql_conflict = self.db.get_upsert_clause(conflict_col, tuple(keys))
 
         for i in range(0, len(rows), batch_size):
             chunk = rows[i:i + batch_size]
             placeholders = ', '.join([placeholder] * len(chunk))
-            sql = f"""insert into `{board}` ({sql_cols}) values {placeholders} on conflict({conflict_col}) do update set {sql_conflict};"""
+            sql = f"insert into `{board}` ({sql_cols}) values {placeholders} {sql_conflict};"
             flat_values = [v for row in chunk for v in row.values()]
-            self.run_query_tuple(sql, params=flat_values, commit=True)
+            self.db.run_query_tuple(sql, params=tuple(flat_values), commit=True)
 
 
     def get_existing_media_hashes(self, board: str, media_hashes: list[str]) -> set[str]:
         if not media_hashes:
             return set()
 
+        ph = self.db.placeholder
+        placeholders = ','.join([ph] * len(media_hashes))
         sql = f"""
             select distinct media_hash
             from `{board}`
             where
-                media_hash in ({get_placeholders(media_hashes)})
+                media_hash in ({placeholders})
                 and media_hash is not null;
         """
-        rows = self.run_query_tuple(sql, params=media_hashes)
+        rows = self.db.run_query_tuple(sql, params=tuple(media_hashes))
         return {row[0] for row in rows} if rows else set()
 
 
@@ -83,12 +96,14 @@ class RitualDb(SqliteDb):
         if not media_hashes:
             return dict(), set()
 
+        ph = self.db.placeholder
+        placeholders = ','.join([ph] * len(media_hashes))
         sql = f"""
             select media_hash, media, banned
             from `{board}_images`
-            where media_hash in ({get_placeholders(media_hashes)});
+            where media_hash in ({placeholders});
         """
-        rows = self.run_query_tuple(sql, params=media_hashes)
+        rows = self.db.run_query_tuple(sql, params=tuple(media_hashes))
         if not rows:
             return dict(), set()
 
@@ -107,20 +122,20 @@ class RitualDb(SqliteDb):
 
 
     def upsert_image(self, board: str, media_hash: str, media: str | None):
-        """
-        Ritual doesn't make a distinction between OP and reply thumbnails.
-        """
         if not media_hash:
             return
 
+        ph = self.db.placeholder
+        if isinstance(self.db, SqliteDb):
+            conflict_clause = 'on conflict(media_hash) do update set total = total + 1, media = coalesce(media, excluded.media)'
+        else:
+            conflict_clause = 'on duplicate key update total = total + 1, media = coalesce(media, values(media))'
         sql = f"""
             insert into `{board}_images` (media_hash, media, total, banned)
-            values (?, ?, 1, 0)
-            on conflict(media_hash) do update set
-                total = total + 1,
-                media = coalesce(media, excluded.media)
-        ;"""
-        self.run_query_tuple(sql, params=(media_hash, media), commit=True)
+            values ({ph}, {ph}, 1, 0)
+            {conflict_clause};
+        """
+        self.db.run_query_tuple(sql, params=(media_hash, media), commit=True)
 
 
     def upsert_posts(self, board: str, posts: list[dict]):
@@ -132,26 +147,20 @@ class RitualDb(SqliteDb):
 
         self.upsert_many(board, posts_to_insert, 'num, subnum')
 
+
     def upsert_thread_stats(self, board: str, thread_stats: dict):
+        ph = self.db.placeholder
+        update_cols = ('time_op', 'time_last', 'time_bump', 'time_ghost', 'time_ghost_bump', 'time_last_modified', 'nreplies', 'nimages', 'sticky', 'locked')
+        conflict_clause = self.db.get_upsert_clause('thread_num', update_cols)
+        placeholders = ', '.join([ph] * (len(update_cols) + 1))
         sql = f"""
             insert into `{board}_threads` (
-                thread_num, time_op, time_last, time_bump, time_ghost, time_ghost_bump,
-                time_last_modified, nreplies, nimages, sticky, locked
+                thread_num, time_op, time_last, time_bump, time_ghost, time_ghost_bump, time_last_modified, nreplies, nimages, sticky, locked
             )
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            on conflict(thread_num) do update set
-                time_op = excluded.time_op,
-                time_last = excluded.time_last,
-                time_bump = excluded.time_bump,
-                time_ghost = excluded.time_ghost,
-                time_ghost_bump = excluded.time_ghost_bump,
-                time_last_modified = excluded.time_last_modified,
-                nreplies = excluded.nreplies,
-                nimages = excluded.nimages,
-                sticky = excluded.sticky,
-                locked = excluded.locked
+            values ({placeholders})
+            {conflict_clause}
         """
-        self.run_query_tuple(
+        self.db.run_query_tuple(
             sql,
             params=(
                 thread_stats['thread_num'],
@@ -168,3 +177,25 @@ class RitualDb(SqliteDb):
             ),
             commit=True
         )
+
+
+    def save_and_close(self):
+        self.db.save_and_close()
+
+
+def create_ritual_db() -> RitualDb:
+    if configs.db_type == 'mysql':
+        db = MysqlDb(
+            host=configs.db_mysql_host,
+            user=configs.db_mysql_user,
+            password=configs.db_mysql_password,
+            database=configs.db_mysql_database,
+            port=configs.db_mysql_port,
+            sql_echo=configs.db_echo
+        )
+    elif configs.db_type == 'sqlite':
+        db = SqliteDb(configs.db_sqlite_path, configs.db_echo)
+    else:
+        raise ValueError(configs.db_type)
+
+    return RitualDb(db)

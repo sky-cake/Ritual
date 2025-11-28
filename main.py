@@ -6,7 +6,7 @@ import traceback
 from requests import Session
 
 import configs
-from db_ritual import RitualDb
+from db_ritual import RitualDb, create_ritual_db
 from enums import MediaType
 from utils import (
     ChanPost,
@@ -785,7 +785,7 @@ def process_board(board: str, db: RitualDb, fetcher: Fetcher, loop: Loop, state:
 
 def main():
     Init()
-    db = RitualDb(configs.db_path)
+    db = create_ritual_db()
     loop = Loop()
     state = State(loop)
     fetcher = Fetcher(state)

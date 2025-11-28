@@ -29,7 +29,22 @@ skip_duplicate_files = False
 
 
 media_save_path = make_path('media')
-db_path = make_path('ritual.db') # sqlite
+
+
+db_type = 'sqlite' # 'sqlite' or 'mysql'
+db_echo = False
+
+
+# must have db_type = 'sqlite'
+db_sqlite_path = make_path('ritual.db') # sqlite
+
+
+# must have db_type = 'mysql'
+db_mysql_host = 'localhost'
+db_mysql_user = 'user'
+db_mysql_password = 'password'
+db_mysql_database = 'ritual'
+db_mysql_port = 3306
 
 
 # If new posts are added to the database and Ritual is interrupted before their media is downloaded,
