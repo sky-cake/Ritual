@@ -20,8 +20,11 @@ download_files_with_mismatched_md5 = False
 # Download files known to exist (False), or skip them (True)
 # The default is (False) i.e. download all files
 # Operates on a per board basis.
-# Duplicate files can be replace with hardlinks or softlinks with the tool 
-#   https://github.com/pkolaczk/fclones
+# Duplicate files can be replace with hardlinks or softlinks with the tool https://github.com/pkolaczk/fclones
+#   For ****example****,
+#     1. mkdir fcc
+#     2. fclones group ./media --cache ./fcc > dupes.txt
+#     3. fclones link --priority oldest < dupes.txt
 skip_duplicate_files = False
 
 
