@@ -12,7 +12,7 @@ class RitualDb:
         self.db = db
 
         boards_list = list(configs.boards.keys())
-        side_tables = ['threads', 'images', 'deleted']
+        side_tables = ['threads', 'images', 'deleted', 'users', 'daily']
 
         async def setup_tables():
             configs.logger.info('Creating base tables.')
