@@ -649,7 +649,7 @@ class Filter:
                 if media_hash in self.banned_hashes:
                     return False
 
-                if media_hash in self.md5_2_media_filename:
+                if configs.skip_duplicate_files and media_hash in self.md5_2_media_filename:
                     stored_filepath = get_filepath(
                         configs.media_save_path,
                         self.board,
@@ -680,7 +680,10 @@ class Filter:
                 if post_has_file(post) and post.get('md5'):
                     media_hashes.append(post['md5'])
 
-        self.md5_2_media_filename, self.banned_hashes = self.db.get_media_hash_info(self.board, media_hashes) if media_hashes else (dict(), set())
+        # query still needed for checking banned media hashes
+        self.md5_2_media_filename, self.banned_hashes = self.db.get_media_hash_info(self.board, media_hashes)
+        if not configs.skip_duplicate_files:
+            self.md5_2_media_filename = dict()
 
         for tid, posts in self.tid_2_posts.items():
             for post in posts:

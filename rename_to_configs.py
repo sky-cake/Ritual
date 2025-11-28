@@ -11,7 +11,19 @@ add_random = False # add random sleep intervals
 ignore_thread_cache = True # on restarts, ignore thread cache and go through all threads
 ignore_http_cache = False # always ignore http cache and go through all threads (used for testing)
 
-download_files_with_mismatched_md5 = False # True will gather the files, when md5s dont align, but it can present a security gap.
+
+# If md5 files from the API and the downloaded file do not match,
+# download anyway (True) or do not download (False)
+download_files_with_mismatched_md5 = False
+
+
+# Download files known to exist (False), or skip them (True)
+# The default is (False) i.e. download all files
+# Operates on a per board basis.
+# Duplicate files can be replace with hardlinks or softlinks with the tool 
+#   https://github.com/pkolaczk/fclones
+skip_duplicate_files = False
+
 
 media_save_path = make_path('media')
 db_path = make_path('ritual.db') # sqlite
