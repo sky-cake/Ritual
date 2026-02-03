@@ -367,7 +367,7 @@ def extract_text_from_html(html_str: str) -> str:
     return html.unescape(parser.get_text())
 
 
-def match_sub_and_com(post: dict, pattern: str):
+def fullmatch_sub_and_com(post: dict, pattern: str) -> bool:
     """Compares a post's raw api data to patterns."""
     sub = post.get('sub')
     com = post.get('com')
@@ -385,11 +385,11 @@ def match_sub_and_com(post: dict, pattern: str):
     return False
 
 
-def get_n_random_chars(n: int):
+def get_n_random_chars(n: int) -> str:
     return ''.join(secrets.choice(string.ascii_letters) for _ in range(n))
 
 
-def get_random_querystring():
+def get_random_querystring() -> str:
     return f'{get_n_random_chars(5)}={get_n_random_chars(5)}'
 
 

@@ -20,7 +20,7 @@ from utils import (
     get_fs_filename_thumbnail,
     get_url_and_filename,
     make_path,
-    match_sub_and_com,
+    fullmatch_sub_and_com,
     post_has_file,
     read_json,
     sleep,
@@ -631,7 +631,7 @@ class Filter:
         return True
 
 
-    def is_media_needed(self, post: dict, pattern: str, media_type: MediaType) -> bool:
+    def is_media_needed(self, post: dict, pattern_or_bool: str | bool, media_type: MediaType) -> bool:
         """
         - Post text does not match pattern    -> skip download
         - Hash banned                         -> skip download
@@ -640,7 +640,10 @@ class Filter:
         - Hash not archived + file missing    -> download
         - Hash not archived + file exists     -> skip download
         """
-        if isinstance(pattern, str) and not match_sub_and_com(post, pattern):
+        if not pattern_or_bool:
+            return False
+
+        if isinstance(pattern_or_bool, str) and not fullmatch_sub_and_com(post, pattern_or_bool):
             return False
 
         if media_type == MediaType.full_media:
@@ -667,12 +670,17 @@ class Filter:
 
         return True
 
+
     def get_pids_for_download(self):
         make_thumbnails = configs.make_thumbnails
-        dl_full_media = configs.boards[self.board].get('dl_full_media')
-        dl_full_media_op = configs.boards[self.board].get('dl_full_media_op')
-        dl_thumbs_op = configs.boards[self.board].get('dl_thumbs_op')
-        dl_thumbs = configs.boards[self.board].get('dl_thumbs')
+
+        dl_fm_op = configs.boards[self.board].get('dl_fm_op')
+        dl_fm_post = configs.boards[self.board].get('dl_fm_post')
+        dl_fm_thread = configs.boards[self.board].get('dl_fm_thread')
+
+        dl_th_op = configs.boards[self.board].get('dl_th_op')
+        dl_th_post = configs.boards[self.board].get('dl_th_post')
+        dl_th_thread = configs.boards[self.board].get('dl_th_thread')
 
         media_hashes = []
         for posts in self.tid_2_posts.values():
@@ -686,28 +694,26 @@ class Filter:
             self.md5_2_media_filename = dict()
 
         for tid, posts in self.tid_2_posts.items():
+            should_dl_fm_thread = self.is_media_needed(self.tid_2_thread[tid], dl_fm_thread, MediaType.full_media)
+            should_dl_th_thread = self.is_media_needed(self.tid_2_thread[tid], dl_th_thread, MediaType.thumbnail)
+
             for post in posts:
                 if not post_has_file(post):
                     continue
 
                 if tid == (pid := post['no']):
-                    if dl_full_media_op:
-                        if self.is_media_needed(post, dl_full_media_op, MediaType.full_media):
-                            self.full_pids.add(pid)
-
-                    if not (make_thumbnails and dl_full_media_op):
-                        if dl_thumbs_op:
-                            if self.is_media_needed(post, dl_thumbs_op, MediaType.thumbnail):
-                                self.thumb_pids.add(pid)
+                    pattern_or_bool_full_media = dl_fm_op
+                    pattern_or_bool_thumbs = dl_th_op
                 else:
-                    if dl_full_media:
-                        if self.is_media_needed(post, dl_full_media, MediaType.full_media):
-                            self.full_pids.add(pid)
+                    pattern_or_bool_full_media = dl_fm_post
+                    pattern_or_bool_thumbs = dl_th_post
 
-                    if not (make_thumbnails and dl_full_media):
-                        if dl_thumbs:
-                            if self.is_media_needed(post, dl_thumbs, MediaType.thumbnail):
-                                self.thumb_pids.add(pid)
+                if should_dl_fm_thread or self.is_media_needed(post, pattern_or_bool_full_media, MediaType.full_media):
+                    self.full_pids.add(pid)
+
+                if not make_thumbnails:
+                    if should_dl_th_thread or self.is_media_needed(post, pattern_or_bool_thumbs, MediaType.thumbnail):
+                        self.thumb_pids.add(pid)
 
 
     def download_media(self, tid_2_posts: dict[int, list[dict]], pid_2_post: dict[int, dict]):
@@ -776,7 +782,9 @@ def process_board(board: str, db: RitualDb, fetcher: Fetcher, loop: Loop, state:
 
     posts = Posts(db, fetcher, board, filter.tid_2_thread, state, catalog)
     posts.fetch_posts()
-    posts.save_posts()
+
+    if configs.boards[board].get('thread_text') != False:
+        posts.save_posts()
 
     filter.download_media(posts.tid_2_posts, posts.pid_2_post)
 

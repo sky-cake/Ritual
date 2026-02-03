@@ -87,44 +87,56 @@ make_thumbnails = False # don't download thumbnails, create them when downloadin
 
 # ARCHIVE RULES - What to archive.
 
-# `op_comment_min_chars` and `op_comment_min_chars_unique` filter everything first.
+# - `op_comment_min_chars` and `op_comment_min_chars_unique` filter everything first.
+# - If a post is blacklisted and whitelisted, it will not be archived - blacklisted filters take precedence over whitelisted filters.
+# - If only a blacklist is specified, skip blacklisted posts, and archive everything else.
+# - If only a whitelist is specified, archive whitelisted posts, and skip everything else.
+# - If no white/black lists are specified, archive everything.
 
-# If a post is blacklisted and whitelisted, it will not be archived - blacklisted filters take precedence over whitelisted filters.
-# If only a blacklist is specified, skip blacklisted posts, and archive everything else.
-# If only a whitelist is specified, archive whitelisted posts, and skip everything else.
-# If no lists are specified, archive everything.
+# - If a thread is marked as "should archive" from the above rules, media downloads can be further filtered based on dl_th_*, and dl_fm_* configs.
+#     - `dl`: download
+#     - `th`: thumb
+#     - `fm`: full_media
 
-# If a thread is marked as "should archive" from the above rules, media downloads can be further filtered based on dl_thumbs, and db_full_media.
-# To download all/no media, specify True/False. To filter media, assign a regex pattern.
+# - To download all/no media, specify True/False. To filter media, assign a regex pattern. Media can be filtered based on three levels.
+#     - `op`: OP media
+#     - `thread`: media in the whole thread
+#     - `post`: media per post
+
 boards = {
     'g': {
-        'blacklist': '.*(local models).*', # if an OP contains "local models" in the subject or comment - skip thread
-        'whitelist': '.*(home server|linux).*', # if not, then for OPs with "home server" or "linux" in the subject or comment...
-        'dl_thumbs': '.*(home server general).*', # download thumbnails, but ONLY if it's a "home server general"
-        'dl_full_media': '.*(wireguard).*', # if anyone mentions "wireguard", get the full media if applicable
-        'thread_text': True, # archive the text if we pass the black/white lists.
+        'blacklist': '.*(local models).*', # If an OP contains "local models" in the subject or comment, then skip the thread.
+        'whitelist': '.*(home server|linux).*', # otherwise, for OPs with "home server" or "linux" in the subject or comment, apply the other configs.
+
+        'thread_text': True, # Archive the text? Blacklist and whitelist filters apply.
+
+        'dl_fm_thread': '.*(wireguard).*', # if a thread/OP mentions "wireguard", get its all the full media for the thread
+        'dl_fm_post': '.*(wireguard).*', # if a replies mentions "wireguard", get its the post's full media
+        'dl_fm_op': '.*(wireguard).*', # if an OP mentions "wireguard", get downloads the OP's full media
+        
+        # Thumbnail downloads work the same way, but they are specified with dl_th_* instead of dl_fm_*
     },
     'gif': {
-        'dl_thumbs': False,
-        'dl_full_media': False,
-        'thread_text': True, # only gather thread text from /gif/ - no files.
+        # This will only gather thread text from /gif/. No files.
+        # By default, we assume {'thread_text': True}
     },
     'ck': {
-        'whitelist': '.*Coffee Time General.*', # only gather thread text, and thumbnails from "Coffee Time General" threads on /ck/
-        'dl_thumbs': True,
-        'dl_full_media': False,
+        # Archive "Coffee Time General" threads with thumbnails only.
+        'whitelist': '.*Coffee Time General.*',
         'thread_text': True,
+        'dl_th_post': True,
+        'dl_fm_post': False,
     },
     't': {
-        'dl_full_media_op': True, # download all thread text, but only thumbnails and full media for the OP posts on /t/
-        'dl_thumbs_op': True,
-        'thread_text': True,
+        # Archive threads. Only download OP full media and OP thumbnails.
+        'dl_fm_op': True,
+        'dl_th_op': True,
     },
     'biz': {
-        'thread_text': True,
-        'op_comment_min_chars': 4, # OP comment must be at least 10 characters long (does not archive: "omg", ".", "lol", etc.)
-        'op_comment_min_chars_unique': 3, # OP comment must have 5 unique character (does not archive: ".", "lol", "hahaha", "aaaaa", etc.)
-    },
+        # Archive threads. No files.
+        'op_comment_min_chars': 4, # Skips "omg" "." "lol"
+        'op_comment_min_chars_unique': 3, # Skips "lol" "hahaha" "aaaaa"
+    }
 }
 
 
