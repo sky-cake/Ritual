@@ -55,30 +55,30 @@ def test_should_archive_whitelist_blacklist(monkeypatch, mock_configs):
 
 def test_returns_true_if_no_cache_yet(state):
     t = make_thread(1, 100)
-    assert state.is_thread_modified('g', t)
+    assert state.is_thread_modified_cache_update('g', t)
     assert state.last_modified['g'][1] == 100
 
 def test_returns_true_if_new_thread(state):
     state.last_modified = {'g': {10: 123}}
     t = make_thread(11, 456)
-    assert state.is_thread_modified('g', t)
+    assert state.is_thread_modified_cache_update('g', t)
     assert 11 in state.last_modified['g']
 
 def test_returns_true_if_last_modified_changed(state):
     state.last_modified = {'g': {42: 100}}
     t = make_thread(42, 200)
-    assert state.is_thread_modified('g', t)
+    assert state.is_thread_modified_cache_update('g', t)
     assert state.last_modified['g'][42] == 200
 
 def test_returns_false_if_last_modified_same(state):
     state.last_modified = {'g': {42: 100}}
     t = make_thread(42, 100)
-    assert not state.is_thread_modified('g', t)
+    assert not state.is_thread_modified_cache_update('g', t)
     assert state.last_modified['g'][42] == 100
 
 def test_creates_board_entry_if_missing(state: State):
     t = make_thread(5, 500)
-    assert state.is_thread_modified('biz', t)
+    assert state.is_thread_modified_cache_update('biz', t)
     assert 'biz' in state.last_modified
     assert state.last_modified['biz'][5] == 500
 
@@ -93,7 +93,7 @@ def test_prunes_when_exceeding_limit(monkeypatch, state):
     import builtins
     monkeypatch.setattr(builtins, 'sorted', fake_sorted)
     t = make_thread(999, 999)
-    state.is_thread_modified(board, t)
+    state.is_thread_modified_cache_update(board, t)
     assert sorted_called['count'] == 1
     assert len(state.last_modified[board]) <= 200
     assert 999 in state.last_modified[board]
@@ -107,9 +107,9 @@ def test_load_catalog_threads(state, catalog_json):
 
     for page in catalog_json:
         for thread in page['threads']:
-            assert state.is_thread_modified(board, thread)
+            assert state.is_thread_modified_cache_update(board, thread)
             assert state.last_modified[board][thread['no']] == thread['last_modified']
-            assert not state.is_thread_modified(board, thread)
+            assert not state.is_thread_modified_cache_update(board, thread)
 
 def test_validate_posts(thread_json):
     posts = Posts(None, None, 'g', None)
@@ -118,31 +118,31 @@ def test_validate_posts(thread_json):
 def test_modified_thread_updates_last_modified(state):
     board = 'g'
     thread = {'no': 1234, 'last_modified': 1000}
-    state.is_thread_modified(board, thread)
+    state.is_thread_modified_cache_update(board, thread)
     assert state.last_modified[board][1234] == 1000
     thread_updated = {'no': 1234, 'last_modified': 2000}
-    assert state.is_thread_modified(board, thread_updated)
+    assert state.is_thread_modified_cache_update(board, thread_updated)
     assert state.last_modified[board][1234] == 2000
 
 def test_prune_old_threads(state):
     board = 'g'
     state.last_modified[board] = {i: i for i in range(210)}
     thread_new = {'no': 9999, 'last_modified': 9999}
-    state.is_thread_modified(board, thread_new)
+    state.is_thread_modified_cache_update(board, thread_new)
     assert len(state.last_modified[board]) == 190
     assert 0 not in state.last_modified[board]
     assert 9999 in state.last_modified[board]
 
 def test_thread_with_no_last_modified_returns_true(state):
     thread = {'no': 42}
-    assert state.is_thread_modified('g', thread)
+    assert state.is_thread_modified_cache_update('g', thread)
     assert state.last_modified['g'][42] is None
 
 def test_multiple_boards_independent(state):
     thread_g = {'no': 1, 'last_modified': 100}
     thread_biz = {'no': 2, 'last_modified': 200}
-    assert state.is_thread_modified('g', thread_g)
-    assert state.is_thread_modified('biz', thread_biz)
+    assert state.is_thread_modified_cache_update('g', thread_g)
+    assert state.is_thread_modified_cache_update('biz', thread_biz)
     assert state.last_modified['g'][1] == 100
     assert state.last_modified['biz'][2] == 200
 
@@ -150,31 +150,31 @@ def test_pruning_removes_oldest_entries(state):
     board = 'g'
     state.last_modified[board] = {i: i for i in range(201)}
     thread_new = {'no': 500, 'last_modified': 500}
-    state.is_thread_modified(board, thread_new)
+    state.is_thread_modified_cache_update(board, thread_new)
     assert len(state.last_modified[board]) <= 200
     assert 500 in state.last_modified[board]
 
 def test_thread_last_modified_none_and_cached_none(state):
     thread = {'no': 10, 'last_modified': None}
-    assert state.is_thread_modified('g', thread)
+    assert state.is_thread_modified_cache_update('g', thread)
 
 def test_thread_last_modified_changes_from_none(state):
     thread = {'no': 1, 'last_modified': None}
-    state.is_thread_modified('g', thread)
+    state.is_thread_modified_cache_update('g', thread)
     thread_updated = {'no': 1, 'last_modified': 123}
-    assert state.is_thread_modified('g', thread_updated)
+    assert state.is_thread_modified_cache_update('g', thread_updated)
     assert state.last_modified['g'][1] == 123
 
 def test_thread_last_modified_same_as_cached(state):
     thread = {'no': 5, 'last_modified': 555}
-    state.is_thread_modified('g', thread)
-    assert not state.is_thread_modified('g', thread)
+    state.is_thread_modified_cache_update('g', thread)
+    assert not state.is_thread_modified_cache_update('g', thread)
 
 def test_large_board_cache_pruning(state):
     board = 'g'
     state.last_modified[board] = {i: i*10 for i in range(205)}
     thread_new = {'no': 9999, 'last_modified': 9999}
-    state.is_thread_modified(board, thread_new)
+    state.is_thread_modified_cache_update(board, thread_new)
     assert len(state.last_modified[board]) <= 190
     assert 9999 in state.last_modified[board]
 

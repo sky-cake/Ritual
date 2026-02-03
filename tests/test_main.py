@@ -127,7 +127,7 @@ class TestCatalog:
 class TestState:
     def test_is_thread_modified_new_thread(self, state):
         thread = {'no': 1, 'last_modified': 100}
-        result = state.is_thread_modified('po', thread)
+        result = state.is_thread_modified_cache_update('po', thread)
         
         assert result is True
         assert state.thread_cache['po'][1] == 100
@@ -135,7 +135,7 @@ class TestState:
     def test_is_thread_modified_changed(self, state):
         state.thread_cache['po'] = {1: 100}
         thread = {'no': 1, 'last_modified': 200}
-        result = state.is_thread_modified('po', thread)
+        result = state.is_thread_modified_cache_update('po', thread)
         
         assert result is True
         assert state.thread_cache['po'][1] == 200
@@ -143,14 +143,14 @@ class TestState:
     def test_is_thread_modified_unchanged(self, state):
         state.thread_cache['po'] = {1: 100}
         thread = {'no': 1, 'last_modified': 100}
-        result = state.is_thread_modified('po', thread)
+        result = state.is_thread_modified_cache_update('po', thread)
         
         assert result is False
         assert state.thread_cache['po'][1] == 100
 
     def test_is_thread_modified_none_value(self, state):
         thread = {'no': 1, 'last_modified': None}
-        result = state.is_thread_modified('po', thread)
+        result = state.is_thread_modified_cache_update('po', thread)
         
         assert result is True
         assert state.thread_cache['po'][1] is None

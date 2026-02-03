@@ -148,7 +148,7 @@ class State:
     def get_timestamp_from_pair(self, pair: tuple[int, float]) -> float:
         return pair[1]
 
-    def is_thread_modified(self, board: str, thread: dict) -> bool:
+    def is_thread_modified_cache_update(self, board: str, thread: dict) -> bool:
         """
         `True` indicates we should download the thread.
         """
@@ -352,7 +352,7 @@ class Posts:
             last_replies = self.catalog.tid_2_last_replies.get(tid)
 
             if self.can_use_catalog_update(thread_data, thread_stats, last_replies):
-                posts_to_add = self.process_catalog_update(tid, thread_data, last_replies, thread_stats)
+                posts_to_add = self.process_catalog_update(tid, last_replies, thread_stats)
                 if posts_to_add:
                     catalog_update_count += 1
                     existing_pids = self.get_existing_posts_for_thread(tid)
@@ -463,7 +463,7 @@ class Posts:
 
         return True
 
-    def process_catalog_update(self, tid: int, thread_data: dict, last_replies: list[dict], thread_stats: dict) -> list[dict]:
+    def process_catalog_update(self, tid: int, last_replies: list[dict], thread_stats: dict) -> list[dict]:
         last_seen = thread_stats.get('most_recent_reply_no')
         new_replies = [r for r in last_replies if r.get('no', 0) > last_seen]
 
@@ -580,10 +580,10 @@ class Filter:
 
                 if self.state.ignore_last_modified:
                     self.tid_2_thread[tid] = thread
-                    self.state.is_thread_modified(self.board, thread)
+                    self.state.is_thread_modified_cache_update(self.board, thread)
                     continue
 
-                if not self.state.is_thread_modified(self.board, thread):
+                if not self.state.is_thread_modified_cache_update(self.board, thread):
                     not_modified_thread_count += 1
                     continue
 
@@ -629,6 +629,17 @@ class Filter:
             return False
 
         return True
+    
+
+    def is_media_needed_simple(self, post: dict, pattern_or_bool: str | bool) -> bool:
+        """Only based on config rules."""
+        if isinstance(pattern_or_bool, bool):
+            return pattern_or_bool
+
+        if isinstance(pattern_or_bool, str):
+            return fullmatch_sub_and_com(post, pattern_or_bool)
+
+        return False
 
 
     def is_media_needed(self, post: dict, pattern_or_bool: str | bool, media_type: MediaType) -> bool:
@@ -640,10 +651,7 @@ class Filter:
         - Hash not archived + file missing    -> download
         - Hash not archived + file exists     -> skip download
         """
-        if not pattern_or_bool:
-            return False
-
-        if isinstance(pattern_or_bool, str) and not fullmatch_sub_and_com(post, pattern_or_bool):
+        if not self.is_media_needed_simple(post, pattern_or_bool):
             return False
 
         if media_type == MediaType.full_media:
@@ -663,9 +671,6 @@ class Filter:
                         return False
 
         filename = get_filename(post, media_type)
-        if not filename:
-            return False
-
         filepath = get_filepath(configs.media_save_path, self.board, media_type, filename)
 
         if os.path.isfile(filepath):
@@ -697,8 +702,8 @@ class Filter:
             self.md5_2_media_filename = dict()
 
         for tid, posts in self.tid_2_posts.items():
-            should_dl_fm_thread = self.is_media_needed(self.tid_2_thread[tid], dl_fm_thread, MediaType.full_media)
-            should_dl_th_thread = self.is_media_needed(self.tid_2_thread[tid], dl_th_thread, MediaType.thumbnail)
+            should_dl_fm_thread = self.is_media_needed_simple(self.tid_2_thread[tid], dl_fm_thread)
+            should_dl_th_thread = self.is_media_needed_simple(self.tid_2_thread[tid], dl_th_thread)
 
             for post in posts:
                 if not post_has_file(post):
