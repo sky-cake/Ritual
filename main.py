@@ -663,6 +663,9 @@ class Filter:
                         return False
 
         filename = get_filename(post, media_type)
+        if not filename:
+            return False
+
         filepath = get_filepath(configs.media_save_path, self.board, media_type, filename)
 
         if os.path.isfile(filepath):

@@ -127,12 +127,12 @@ def post_has_file(post: dict) -> bool:
     return post.get('tim') and post.get('ext')
 
 
-def get_fs_filename_full_media(post: dict) -> str:
+def get_fs_filename_full_media(post: dict) -> str | None:
     if post_has_file(post):
         return f"{post.get('tim')}{post.get('ext')}"
 
 
-def get_fs_filename_thumbnail(post: dict) -> str:
+def get_fs_filename_thumbnail(post: dict) -> str | None:
     if post_has_file(post):
         return f"{post.get('tim')}s.jpg"
 
@@ -410,7 +410,7 @@ def get_url_and_filename(configs, board: str, post: dict, media_type: MediaType)
     return url, filename
 
 
-def get_filename(post: dict, media_type: MediaType):
+def get_filename(post: dict, media_type: MediaType) -> str | None:
     if media_type == MediaType.thumbnail:
         filename = get_fs_filename_thumbnail(post)
 
