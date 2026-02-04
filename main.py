@@ -823,10 +823,13 @@ def main():
             loop.sleep()
 
         except KeyboardInterrupt:
-            configs.logger.info('Received interrupt signal, saving state and exiting...')
-            
+            configs.logger.info('Received interrupt signal')
+            configs.logger.info('Saving state...')
             state.save()
+            configs.logger.info('Done')
+            configs.logger.info('Saving database...')
             db.save_and_close()
+            configs.logger.info('Done')
             break
 
         except Exception as e:
