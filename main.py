@@ -745,6 +745,9 @@ class Filter:
         url, filename = get_url_and_filename(configs, self.board, post, media_type)
         filepath = get_filepath(configs.media_save_path, self.board, media_type, filename)
 
+        if os.path.isfile(filepath):
+            return True
+
         expected_size = post.get('fsize') if media_type == MediaType.full_media else None
         expected_md5 = post.get('md5') if media_type == MediaType.full_media else None
 
