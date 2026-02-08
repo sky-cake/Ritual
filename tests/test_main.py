@@ -1,7 +1,7 @@
 import json
 import tempfile
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, AsyncMock
 
 import pytest
 
@@ -9,6 +9,7 @@ from main import Catalog, Filter, Posts, State, Loop, Fetcher
 from db_ritual import RitualDb
 from utils import make_path
 from enums import MediaType
+from tests.conftest import create_test_sqlite_db
 
 
 @pytest.fixture
@@ -21,6 +22,7 @@ def mock_configs(monkeypatch):
         add_random=False,
         logger=SimpleNamespace(info=lambda s: None, warning=lambda s: None, error=lambda s: None),
         boards={'po': {'thread_text': True}},
+        boards_with_archive=[],
         ignore_last_modified=False,
         ignore_thread_cache=False,
         ignore_http_cache=False,
@@ -29,22 +31,11 @@ def mock_configs(monkeypatch):
         db_path=':memory:',
         unescape_data_b4_db_write=True,
         loop_cooldown_sec=0,
+        skip_duplicate_files=False,
     )
     monkeypatch.setattr('main.configs', cfg)
     monkeypatch.setattr('db_ritual.configs', cfg)
     return cfg
-
-
-@pytest.fixture
-def catalog_json():
-    with open(make_path('tests', 'test_files', 'catalog.json'), 'r') as f:
-        return json.load(f)
-
-
-@pytest.fixture
-def thread_json():
-    with open(make_path('tests', 'test_files', 'thread.json'), 'r') as f:
-        return json.load(f)
 
 
 @pytest.fixture
@@ -75,8 +66,13 @@ def state(loop):
 
 
 @pytest.fixture
-def db(mock_configs):
-    return RitualDb(mock_configs.db_path)
+def db(mock_configs, monkeypatch):
+    # Mock the async table creation to avoid asagi_tables dependency in tests
+    monkeypatch.setattr('db_ritual.execute_action', AsyncMock())
+    monkeypatch.setattr('db_ritual.asagi_close_pool', AsyncMock())
+    
+    sqlite_db = create_test_sqlite_db('po')
+    return RitualDb(sqlite_db)
 
 
 class TestCatalog:
@@ -282,18 +278,21 @@ class TestFilter:
 
 class TestPosts:
     def test_fetch_posts_success(self, mock_fetcher, db, thread_json, mock_configs, state, catalog_json):
+        from main import Archive
         tid_2_thread = {628117: {'no': 628117, 'last_modified': 100, 'replies': 3, 'images': 0}}
         catalog = Catalog(mock_fetcher, 'po')
         catalog.catalog = catalog_json
         catalog.set_tid_2_thread()
         catalog.set_tid_2_last_replies()
         posts = Posts(db, mock_fetcher, 'po', tid_2_thread, state, catalog)
-        posts.fetch_posts()
+        archive = Archive(mock_fetcher, 'po')
+        posts.fetch_posts(archive)
         
         assert 628117 in posts.tid_2_posts
         assert len(posts.pid_2_post) > 0
 
     def test_fetch_posts_missing_thread(self, mock_fetcher, db, mock_configs, state, catalog_json):
+        from main import Archive
         def fetch_json(url, **kwargs):
             if 'thread' in url:
                 return {}
@@ -307,11 +306,13 @@ class TestPosts:
         catalog.set_tid_2_thread()
         catalog.set_tid_2_last_replies()
         posts = Posts(db, mock_fetcher, 'po', tid_2_thread, state, catalog)
-        posts.fetch_posts()
+        archive = Archive(mock_fetcher, 'po')
+        posts.fetch_posts(archive)
         
         assert 999999 not in posts.tid_2_posts
 
     def test_fetch_posts_304_not_modified(self, mock_fetcher, db, mock_configs, state, catalog_json):
+        from main import Archive
         def fetch_json(url, **kwargs):
             if 'thread' in url:
                 return None
@@ -325,7 +326,8 @@ class TestPosts:
         catalog.set_tid_2_thread()
         catalog.set_tid_2_last_replies()
         posts = Posts(db, mock_fetcher, 'po', tid_2_thread, state, catalog)
-        posts.fetch_posts()
+        archive = Archive(mock_fetcher, 'po')
+        posts.fetch_posts(archive)
         
         assert 628117 not in posts.tid_2_posts
 
@@ -354,7 +356,7 @@ class TestPosts:
         
         posts.save_posts()
         
-        rows = db.run_query_tuple(f'select num from `po` where num = ?', params=(628117,))
+        rows = db.db.run_query_tuple(f'select num from `po` where num = ?', params=(628117,))
         assert len(rows) > 0
 
 
@@ -405,4 +407,3 @@ class TestIntegration:
         
         assert len(posts.pid_2_post) > 0
         assert len(filter_obj.tid_2_thread) > 0
-

@@ -1,9 +1,10 @@
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import patch, AsyncMock
 
 import pytest
 
 from db_ritual import RitualDb
+from tests.conftest import create_test_sqlite_db
 
 
 @pytest.fixture
@@ -18,39 +19,44 @@ def mock_configs(monkeypatch):
 
 
 @pytest.fixture
-def db(mock_configs):
-    return RitualDb(':memory:')
+def db(mock_configs, monkeypatch):
+    # Mock the async table creation to avoid asagi_tables dependency in tests
+    monkeypatch.setattr('db_ritual.execute_action', AsyncMock())
+    monkeypatch.setattr('db_ritual.asagi_close_pool', AsyncMock())
+    
+    sqlite_db = create_test_sqlite_db('test')
+    return RitualDb(sqlite_db)
 
 
 class TestRitualDb:
     def test_set_posts_deleted(self, db, mock_configs):
-        db.run_query_tuple(
+        db.db.run_query_tuple(
             f'insert into `test` (num, thread_num, subnum, op, timestamp, timestamp_expired, preview_w, preview_h, media_w, media_h, media_size, spoiler, deleted, capcode, sticky, locked, poster_ip, media_id) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             params=(1, 100, 0, 1, 1000, 0, 0, 0, 0, 0, 0, 0, 0, 'N', 0, 0, '0', 0)
         )
         
         db.set_posts_deleted('test', [1])
         
-        rows = db.run_query_tuple(f'select deleted from `test` where num = ?', params=(1,))
+        rows = db.db.run_query_tuple(f'select deleted from `test` where num = ?', params=(1,))
         assert rows[0][0] == 1
 
     def test_set_threads_deleted(self, db, mock_configs):
-        db.run_query_tuple(
+        db.db.run_query_tuple(
             f'insert into `test` (num, thread_num, subnum, op, timestamp, timestamp_expired, preview_w, preview_h, media_w, media_h, media_size, spoiler, deleted, capcode, sticky, locked, poster_ip, media_id) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             params=(100, 100, 0, 1, 1000, 0, 0, 0, 0, 0, 0, 0, 0, 'N', 0, 0, '0', 0)
         )
         
         db.set_threads_deleted('test', [100])
         
-        rows = db.run_query_tuple(f'select deleted from `test` where num = ?', params=(100,))
+        rows = db.db.run_query_tuple(f'select deleted from `test` where num = ?', params=(100,))
         assert rows[0][0] == 1
 
     def test_get_existing_media_hashes(self, db, mock_configs):
-        db.run_query_tuple(
+        db.db.run_query_tuple(
             f'insert into `test` (num, thread_num, subnum, op, timestamp, timestamp_expired, preview_w, preview_h, media_w, media_h, media_size, spoiler, deleted, capcode, sticky, locked, poster_ip, media_hash, media_id) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             params=(1, 100, 0, 1, 1000, 0, 0, 0, 0, 0, 0, 0, 0, 'N', 0, 0, '0', 'hash1', 0)
         )
-        db.run_query_tuple(
+        db.db.run_query_tuple(
             f'insert into `test` (num, thread_num, subnum, op, timestamp, timestamp_expired, preview_w, preview_h, media_w, media_h, media_size, spoiler, deleted, capcode, sticky, locked, poster_ip, media_hash, media_id) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             params=(2, 100, 0, 0, 1001, 0, 0, 0, 0, 0, 0, 0, 0, 'N', 0, 0, '0', 'hash2', 0)
         )
@@ -125,6 +131,5 @@ class TestRitualDb:
             
             db.upsert_posts('test', [post])
             
-            rows = db.run_query_tuple(f'select num from `test` where num = ?', params=(1,))
+            rows = db.db.run_query_tuple(f'select num from `test` where num = ?', params=(1,))
             assert len(rows) > 0
-
