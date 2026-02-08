@@ -371,10 +371,9 @@ class Archive:
         self.board = board
         self.has_archive: bool = board in configs.boards_with_archive
         self.archived_tids: set[int] | None = None
-        self.fetching_archive_failed: bool = False
 
     def board_supports_archive(self) -> bool:
-        return self.has_archive and not self.fetching_archive_failed
+        return self.has_archive
 
     def is_archived(self, tid: int) -> bool:
         """
@@ -402,13 +401,11 @@ class Archive:
             add_random=configs.add_random,
         )
 
-        if not data or not isinstance(data, list):
-            self.fetching_archive_failed = True
-            configs.logger.info(f'[{self.board}] archive.json not available or empty')
+        if not data:
             return
 
         self.archived_tids = set(data)
-        configs.logger.info(f'[{self.board}] Loaded {len(self.archived_tids)} archived thread IDs')
+        configs.logger.info(f'[{self.board}] Loaded {len(self.archived_tids)} archived tids')
 
 
 class Catalog:
@@ -523,8 +520,8 @@ class Posts:
             elif deletion_type == DeletionType.deleted:
                 tids_deleted.append(tid)
 
-        configs.logger.info(f'[{self.board}] Thread [{tid}] archived: {tids_archived}')
-        configs.logger.info(f'[{self.board}] Thread [{tid}] deleted by moderator: {tids_deleted}')
+        configs.logger.info(f'[{self.board}] Threads archived: {tids_archived}')
+        configs.logger.info(f'[{self.board}] Threads deleted by moderator: {tids_deleted}')
 
         if missing_tids:
             configs.logger.info(f'[{self.board}] {len(missing_tids)} thread(s) no longer in catalog')
