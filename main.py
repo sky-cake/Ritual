@@ -827,18 +827,13 @@ def main():
             configs.logger.info('Saving state...')
             state.save()
             configs.logger.info('Done')
-            configs.logger.info('Saving database...')
-            db.save_and_close()
             configs.logger.info('Done')
             break
 
         except Exception as e:
             configs.logger.error(f'Critical error in main loop: {e}')
             configs.logger.error(traceback.format_exc())
-            
             state.save()
-            db.save_and_close()
-
             critical_error_count += 1
             if critical_error_count >= 3:
                 configs.logger.error('Critical error count reached 3, exiting...')
