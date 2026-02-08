@@ -495,6 +495,7 @@ class Posts:
         - uses catalog-based incremental updates when possible
         '''
 
+        pids_deleted = []
         tids_deleted = []
         tids_archived = []
         catalog_update_count = 0
