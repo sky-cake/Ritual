@@ -633,6 +633,10 @@ class Posts:
         Note: If any random tid (44, -2, 1e9) is passed into this function, it is inconclusive.
         """
         meta = self.state.get_thread_meta(self.board, tid)
+
+        if not meta:
+            return DeletionType.inconclusive
+
         page, bump_time = meta
         if not (page and bump_time):
             return DeletionType.inconclusive
