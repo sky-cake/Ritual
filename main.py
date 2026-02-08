@@ -347,6 +347,10 @@ class Posts:
         catalog_update_count = 0
         full_fetch_count = 0
 
+        # prefetch existing pids for each thread in one query
+        all_tids = list(self.tid_2_thread.keys())
+        tid_2_existing_pids = self.db.get_tid_2_existing_pids(self.board, all_tids)
+
         for tid in self.tid_2_thread:
             thread_data = self.tid_2_thread[tid]
             thread_stats = self.state.get_thread_stats(self.board, tid)
@@ -356,7 +360,9 @@ class Posts:
                 posts_to_add = self.process_catalog_update(tid, last_replies, thread_stats)
                 if posts_to_add:
                     catalog_update_count += 1
-                    existing_pids = self.get_existing_posts_for_thread(tid)
+                    existing_pids = tid_2_existing_pids.get(tid, set())
+                    if tid in self.tid_2_posts:
+                        existing_pids = existing_pids | {p['no'] for p in self.tid_2_posts[tid]}
 
                     if tid not in self.tid_2_posts:
                         self.tid_2_posts[tid] = []
@@ -402,7 +408,7 @@ class Posts:
             self.validate_posts(thread['posts'])
 
             pids_found = {post['no'] for post in thread['posts']}
-            pids_all = self.db.get_pids_by_tid(self.board, tid)
+            pids_all = tid_2_existing_pids.get(tid, set())
             for pid in pids_all:
                 if pid not in pids_found:
                     pids_deleted.append(pid)
@@ -482,11 +488,6 @@ class Posts:
             configs.logger.info(f'[{self.board}] Catalog update for thread [{tid}]: {len(posts_to_add)} new post(s)')
 
         return posts_to_add
-
-    def get_existing_posts_for_thread(self, tid: int) -> set[int]:
-        if tid in self.tid_2_posts:
-            return {p['no'] for p in self.tid_2_posts[tid]}
-        return set(self.db.get_pids_by_tid(self.board, tid))
 
 
     def set_pid_2_post(self):

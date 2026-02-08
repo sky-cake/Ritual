@@ -23,21 +23,6 @@ def db(mock_configs):
 
 
 class TestRitualDb:
-    def test_get_pids_by_tid(self, db, mock_configs):
-        db.run_query_tuple(
-            f'insert into `test` (num, thread_num, subnum, op, timestamp, timestamp_expired, preview_w, preview_h, media_w, media_h, media_size, spoiler, deleted, capcode, sticky, locked, poster_ip, media_id) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            params=(1, 100, 0, 1, 1000, 0, 0, 0, 0, 0, 0, 0, 0, 'N', 0, 0, '0', 0)
-        )
-        db.run_query_tuple(
-            f'insert into `test` (num, thread_num, subnum, op, timestamp, timestamp_expired, preview_w, preview_h, media_w, media_h, media_size, spoiler, deleted, capcode, sticky, locked, poster_ip, media_id) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            params=(2, 100, 0, 0, 1001, 0, 0, 0, 0, 0, 0, 0, 0, 'N', 0, 0, '0', 0)
-        )
-        
-        pids = db.get_pids_by_tid('test', 100)
-        
-        assert 1 in pids
-        assert 2 in pids
-
     def test_set_posts_deleted(self, db, mock_configs):
         db.run_query_tuple(
             f'insert into `test` (num, thread_num, subnum, op, timestamp, timestamp_expired, preview_w, preview_h, media_w, media_h, media_size, spoiler, deleted, capcode, sticky, locked, poster_ip, media_id) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',

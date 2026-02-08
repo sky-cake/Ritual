@@ -37,10 +37,20 @@ class RitualDb:
         self.db.save()
 
 
-    def get_pids_by_tid(self, board: str, tid: int) -> list[int]:
+    def get_tid_2_existing_pids(self, board: str, tids: list[int]) -> dict[int, set[int]]:
+        if not tids:
+            return {}
+
         ph = self.db.placeholder
-        rows = self.db.run_query_tuple(f'select num from `{board}` where thread_num = {ph}', params=(tid,))
-        return [row[0] for row in rows] if rows else []
+        placeholders = ','.join([ph] * len(tids))
+        sql = f'select thread_num, num from `{board}` where thread_num in ({placeholders})'
+        rows = self.db.run_query_tuple(sql, params=tuple(tids))
+
+        result: dict[int, set[int]] = {tid: set() for tid in tids}
+        if rows:
+            for thread_num, num in rows:
+                result[thread_num].add(num)
+        return result
 
 
     def set_posts_deleted(self, board: str, pids: list[int]) -> None:
