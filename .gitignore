@@ -17,3 +17,5 @@ launch.json
 *.db-shm
 *.db-wal
 *.log
+asagi-tables/
+asagi.toml
