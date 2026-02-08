@@ -834,11 +834,11 @@ def main():
             configs.logger.error(traceback.format_exc())
             state.save()
             critical_error_count += 1
-            if critical_error_count >= 3:
+            if critical_error_count >= 5:
                 configs.logger.error('Critical error count reached 3, exiting...')
                 break
 
-            sleep(60)
+            sleep(critical_error_count * 60)
 
 
 if __name__=='__main__':
