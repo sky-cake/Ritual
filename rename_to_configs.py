@@ -66,10 +66,10 @@ url_thumbnail = "https://i.4cdn.org/{board}/{image_id}s.jpg" # str or None
 
 
 # A thread is marked as deleted if the thread is not in the /catalog or /archive
-# and all three of these are true 
-not_deleted_if_bump_age_exceeds_n_min = 60 # thread got recent attention
-not_deleted_if_page_n_reached = 8          # thread is young
-not_deleted_if_n_replies = 50              # thread is popular
+# and all three of these are true
+not_deleted_if_bump_age_exceeds_n_min = 60 # thread got recent attention, so mods should see it
+not_deleted_if_page_n_reached = 5          # thread is has reached a higher page, going ignored
+not_deleted_if_n_replies = 30              # thread is popular, and no one deleted it
 
 ## lainchan
 # url_full_media = "https://lainchan.org/{board}/src/{image_id}{ext}"

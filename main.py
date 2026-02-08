@@ -626,12 +626,12 @@ class Posts:
         - if not probably deleted -> pruned
         - if in archive -> archived
         - else -> deleted
-        
-        Note: If any random tid (44, -2, 1e9) is passed into this function, we will just claim it was pruned.
+
+        Note: If any random tid (44, -2, 1e9) is passed into this function, it is inconclusive.
         """
         meta = self.state.get_thread_meta(self.board, tid)
         if not meta:
-            return DeletionType.pruned
+            return DeletionType.inconclusive
 
         page, bump_time = meta
 
@@ -648,7 +648,7 @@ class Posts:
         thread_is_popular = replies >= configs.not_deleted_if_n_replies
 
         # for threads missing from catalog,
-        probably_deleted = thread_got_recent_attention and on_early_page and thread_is_popular
+        probably_deleted = thread_got_recent_attention and on_early_page and not thread_is_popular
 
         if not probably_deleted:
             return DeletionType.pruned

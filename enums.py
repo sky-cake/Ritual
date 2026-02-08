@@ -7,6 +7,7 @@ class MediaType(Enum):
 
 
 class DeletionType(Enum):
+    inconclusive = 'inconclusive' # do nothing
     archived = 'archived' # marked as locked
     deleted = 'deleted' # marked as deleted
     pruned = 'pruned' # do nothing
