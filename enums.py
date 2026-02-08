@@ -7,6 +7,6 @@ class MediaType(Enum):
 
 
 class DeletionType(Enum):
-    archived = 'archived'
-    deleted = 'deleted'
-    pruned = 'pruned'
+    archived = 'archived' # marked as locked
+    deleted = 'deleted' # marked as deleted
+    pruned = 'pruned' # do nothing

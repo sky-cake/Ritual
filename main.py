@@ -100,7 +100,7 @@ class State:
         - thread_cache: Maps board -> thread_id -> last_modified timestamp from catalog JSON.
         - http_cache: Maps URL -> HTTP Last-Modified header string for conditional requests.
         - thread_stats: Maps board -> thread_id -> stats dict (replies, images, most_recent_reply_no).
-        - thread_meta: Maps board -> thread_id -> (page, bump_time, hit_bump_limit) for deletion detection.
+        - thread_meta: Maps board -> thread_id -> (page, bump_time) for deletion detection.
         """
         self.thread_cache_filepath = make_path('cache', 'thread_cache.json')
         self.thread_cache: dict[str, dict[int, float]] = dict()
@@ -166,7 +166,7 @@ class State:
         }
 
     def get_cached_thread_meta(self) -> dict[str, dict[int, list]]:
-        """{g: {123: [page, bump_time, hit_bump_limit], ...}, ...}"""
+        """{g: {123: [page, bump_time], ...}, ...}"""
         thread_meta = read_json(self.thread_meta_filepath)
 
         if not thread_meta:
@@ -277,15 +277,16 @@ class State:
         return self.get_http_last_modified(url)
 
     def update_thread_meta(self, board: str, tid_2_page: dict[int, int], tid_2_thread: dict[int, dict]):
-        """update page positions, bump times, and bump limit status from catalog data."""
+        """update page positions and bump times from catalog data."""
         if board not in self.thread_meta:
             self.thread_meta[board] = dict()
 
         for tid, page in tid_2_page.items():
             thread = tid_2_thread.get(tid, dict())
+            # last reply time, op time, 0
+            # if 0, no harm done - thread deletion logic still relies on page number, n replies, and not in archive
             bump_time = thread.get('last_modified', thread.get('time', 0))
-            hit_bump_limit = bool(thread.get('bumplimit', 0))
-            self.thread_meta[board][tid] = [page, bump_time, hit_bump_limit]
+            self.thread_meta[board][tid] = [page, bump_time]
 
         self.prune_old_thread_meta(board)
 
@@ -305,7 +306,7 @@ class State:
                 del board_meta[stale_id]
 
     def get_thread_meta(self, board: str, tid: int) -> list | None:
-        """returns [page, bump_time, hit_bump_limit] or None if not tracked."""
+        """returns [page, bump_time] or None if not tracked."""
         if board not in self.thread_meta:
             return
         return self.thread_meta[board].get(tid)
@@ -512,22 +513,18 @@ class Posts:
         existing_tids = self.db.get_recently_active_thread_ids(self.board) | set(self.state.thread_meta.get(self.board, {}).keys())
         missing_tids = existing_tids - catalog_tids
 
-        # assumes threads don't disappear from the catalog, then return
-        # missing_tids get removed from self.state after db writes
+        # - assumes threads don't disappear from the catalog, then return
+        # - missing_tids get removed from self.state after db writes
         for tid in missing_tids:
             deletion_type = self.classify_missing_thread(tid, archive)
 
             if deletion_type == DeletionType.archived:
-                configs.logger.info(f'[{self.board}] Thread [{tid}] archived')
                 tids_archived.append(tid)
             elif deletion_type == DeletionType.deleted:
-                configs.logger.info(f'[{self.board}] Thread [{tid}] deleted by moderator')
                 tids_deleted.append(tid)
-            elif deletion_type == DeletionType.pruned:
-                # not marked as deleted, this is the natural lifespan of a thread
-                configs.logger.info(f'[{self.board}] Thread [{tid}] pruned')
-            else:
-                configs.logger.info(f'[{self.board}] Thread [{tid}] deleted for unknown reason')
+
+        configs.logger.info(f'[{self.board}] Thread [{tid}] archived: {tids_archived}')
+        configs.logger.info(f'[{self.board}] Thread [{tid}] deleted by moderator: {tids_deleted}')
 
         if missing_tids:
             configs.logger.info(f'[{self.board}] {len(missing_tids)} thread(s) no longer in catalog')
@@ -623,30 +620,38 @@ class Posts:
 
     def classify_missing_thread(self, tid: int, archive: Archive) -> DeletionType:
         """
-        A missing thread is `probably_deleted` if it was,
+        A 404'd thread could be deleted if all three of these are true:
 
-            - recently bumped  (`config.thread_delete_bump_age_hours`)
-            - on an early page (`config.thread_delete_page_threshold`)
-            - has not hit bump limit 
+            - could be deleted if bumped within N minutes  (`config.not_deleted_if_bump_age_exceeds_n_min`)
+            - could be deleted if on early pages           (`config.not_deleted_if_page_n_reached`)
+            - could be deleted if fewer than N replies     (`config.not_deleted_if_n_replies`)
 
-        - if not `probably_deleted` -> pruned
-        - if `probably_deleted` AND board has archive -> check archive.json
-        - if in archive -> archived, else -> deleted
+        - if not probably deleted -> pruned
+        - if in archive -> archived
+        - else -> deleted
+        
+        Note: If any random tid (44, -2, 1e9) is passed into this function, we will just claim it was pruned.
         """
         meta = self.state.get_thread_meta(self.board, tid)
         if not meta:
             return DeletionType.pruned
 
-        page, bump_time, hit_bump_limit = meta
+        page, bump_time = meta
 
-        recently_bumped = False
+        thread_got_recent_attention = False
         if bump_time:
-            hours_since_bump = (time.time() - bump_time) / 3600
-            recently_bumped = hours_since_bump < configs.thread_delete_bump_age_hours
+            minutes_since_bump = (time.time() - bump_time) / 60
+            thread_got_recent_attention = minutes_since_bump < configs.not_deleted_if_bump_age_exceeds_n_min
+
+        thread_stats = self.state.get_thread_stats(self.board, tid)
+        replies = thread_stats.get('replies', 0) if thread_stats else 0
 
         # page is either None or gte 1
-        on_early_page = page and page < configs.thread_delete_page_threshold
-        probably_deleted = recently_bumped and on_early_page and not hit_bump_limit
+        on_early_page = page and page < configs.not_deleted_if_page_n_reached
+        thread_is_popular = replies < configs.not_deleted_if_n_replies
+
+        # for threads missing from catalog,
+        probably_deleted = thread_got_recent_attention and on_early_page and thread_is_popular
 
         if not probably_deleted:
             return DeletionType.pruned

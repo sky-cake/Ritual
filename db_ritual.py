@@ -54,8 +54,8 @@ class RitualDb:
         return result
 
 
-    def get_recently_active_thread_ids(self, board: str, since_seconds: int = 6 * 3600) -> set[int]:
-        # 6 hours is a long time from an OP to withstand being deleted by a mod
+    def get_recently_active_thread_ids(self, board: str, since_seconds: int = 3600) -> set[int]:
+        # 1 hour is a long time for an OP to withstand being deleted by a mod
         # utc epoch seconds
         cutoff = int(time.time()) - since_seconds
         sql = f'select distinct thread_num from `{board}` where thread_num = num and deleted = 0 and timestamp > {self.db.placeholder}'

@@ -65,9 +65,11 @@ url_full_media = "https://i.4cdn.org/{board}/{image_id}{ext}" # str or None
 url_thumbnail = "https://i.4cdn.org/{board}/{image_id}s.jpg" # str or None
 
 
-# A 404'd thread is probably_deleted if all three of these are true:
-thread_delete_page_threshold = 8  # probably_deleted if on pages 1-7 (early pages)
-thread_delete_bump_age_hours = 10 # probably_deleted if bumped within this many hours
+# A thread is marked as deleted if the thread is not in the /catalog or /archive
+# and all three of these are true 
+not_deleted_if_bump_age_exceeds_n_min = 60 # thread got recent attention
+not_deleted_if_page_n_reached = 8          # thread is young
+not_deleted_if_n_replies = 50              # thread is popular
 
 ## lainchan
 # url_full_media = "https://lainchan.org/{board}/src/{image_id}{ext}"
