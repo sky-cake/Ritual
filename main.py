@@ -15,11 +15,13 @@ from utils import (
     create_thumbnail,
     download_file,
     extract_text_from_html,
+    fetch_and_save_boards_json,
     get_filename,
     get_filepath,
     get_fs_filename_full_media,
     get_fs_filename_thumbnail,
     get_url_and_filename,
+    load_boards_with_archive,
     make_path,
     fullmatch_sub_and_com,
     post_has_file,
@@ -34,6 +36,20 @@ class Init:
     def __init__(self):
         if configs.make_thumbnails:
             test_deps(configs.logger)
+
+        boards_json_path = make_path('cache', 'boards.json')
+        if os.path.isfile(boards_json_path):
+            boards_json = read_json(boards_json_path)
+            configs.logger.info(f'Loaded boards.json from {boards_json_path}')
+        else:
+            boards_json = fetch_and_save_boards_json(boards_json_path, configs.url_boards, configs.logger)
+
+        configs.boards_with_archive = load_boards_with_archive(boards_json)
+
+        if not configs.boards_with_archive:
+            raise ValueError(configs.boards_with_archive)
+
+        configs.logger.info(f'{len(configs.boards_with_archive)} boards have archive support')
 
 
 class Loop:
@@ -84,6 +100,7 @@ class State:
         - thread_cache: Maps board -> thread_id -> last_modified timestamp from catalog JSON.
         - http_cache: Maps URL -> HTTP Last-Modified header string for conditional requests.
         - thread_stats: Maps board -> thread_id -> stats dict (replies, images, most_recent_reply_no).
+        - thread_meta: Maps board -> thread_id -> (page, bump_time, hit_bump_limit) for deletion detection.
         """
         self.thread_cache_filepath = make_path('cache', 'thread_cache.json')
         self.thread_cache: dict[str, dict[int, float]] = dict()
@@ -93,6 +110,9 @@ class State:
 
         self.thread_stats_filepath = make_path('cache', 'thread_stats.json')
         self.thread_stats: dict[str, dict[int, dict]] = dict()
+
+        self.thread_meta_filepath = make_path('cache', 'thread_meta.json')
+        self.thread_meta: dict[str, dict[int, list]] = dict()
 
         self.loop = loop
 
@@ -108,6 +128,7 @@ class State:
             write_json_obj_to_file(self.thread_cache_filepath, self.thread_cache)
             write_json_obj_to_file(self.http_cache_filepath, self.http_cache)
             write_json_obj_to_file(self.thread_stats_filepath, self.thread_stats)
+            write_json_obj_to_file(self.thread_meta_filepath, self.thread_meta)
         except Exception as e:
             configs.logger.error(f'Failed to save state: {e}')
             configs.logger.error(traceback.format_exc())
@@ -117,9 +138,10 @@ class State:
         '''reads in every cache'''
         self.thread_cache = self.get_cached_thread_cache()
         self.http_cache = read_json(self.http_cache_filepath) or dict()
-        self.thread_stats = read_json(self.thread_stats_filepath) or dict()
+        self.thread_stats = self.get_cached_thread_stats()
+        self.thread_meta = self.get_cached_thread_meta()
 
-    def get_cached_thread_cache(self):
+    def get_cached_thread_cache(self) -> dict[str, dict[int, float]]:
         """{g: {123: 1717755968, 124: 1717755999}, ck: {456: 1717755968}, ...}"""
         thread_cache = read_json(self.thread_cache_filepath)
 
@@ -129,6 +151,30 @@ class State:
         return {
             board: {int(tid): lm for tid, lm in tid_2_last_modified.items()}
             for board, tid_2_last_modified in thread_cache.items()
+        }
+
+    def get_cached_thread_stats(self) -> dict[str, dict[int, dict]]:
+        """{g: {123: {replies: 10, images: 5, most_recent_reply_no: 456}, ...}, ...}"""
+        thread_stats = read_json(self.thread_stats_filepath)
+
+        if not thread_stats:
+            return dict()
+
+        return {
+            board: {int(tid): stats for tid, stats in tid_2_stats.items()}
+            for board, tid_2_stats in thread_stats.items()
+        }
+
+    def get_cached_thread_meta(self) -> dict[str, dict[int, list]]:
+        """{g: {123: [page, bump_time, hit_bump_limit], ...}, ...}"""
+        thread_meta = read_json(self.thread_meta_filepath)
+
+        if not thread_meta:
+            return dict()
+
+        return {
+            board: {int(tid): meta for tid, meta in tid_2_meta.items()}
+            for board, tid_2_meta in thread_meta.items()
         }
 
     def prune_old_threads(self, board: str):
@@ -197,6 +243,23 @@ class State:
         if most_recent_reply_no is not None:
             self.thread_stats[board][tid]['most_recent_reply_no'] = most_recent_reply_no
 
+        self.prune_old_thread_stats(board)
+
+    def prune_old_thread_stats(self, board: str):
+        """don't let the dict grow over N entries per board."""
+        if board not in self.thread_stats:
+            return
+
+        N = 200
+        board_stats = self.thread_stats[board]
+        if (count := len(board_stats)) > N:
+            # delete the oldest threads based on most_recent_reply_no
+            M = count - N + 10
+            tid_reply_pairs = [(tid, stats.get('most_recent_reply_no', 0) or 0) for tid, stats in board_stats.items()]
+            tid_reply_pairs.sort(key=lambda pair: pair[1])
+            for stale_id, _ in tid_reply_pairs[:M]:
+                del board_stats[stale_id]
+
     def get_http_last_modified(self, url: str) -> str | None:
         return self.http_cache.get(url)
 
@@ -212,6 +275,45 @@ class State:
     def get_thread_url_last_modified(self, board: str, tid: int) -> str | None:
         url = configs.url_thread.format(board=board, thread_id=tid)
         return self.get_http_last_modified(url)
+
+    def update_thread_meta(self, board: str, tid_2_page: dict[int, int], tid_2_thread: dict[int, dict]):
+        """update page positions, bump times, and bump limit status from catalog data."""
+        if board not in self.thread_meta:
+            self.thread_meta[board] = dict()
+
+        for tid, page in tid_2_page.items():
+            thread = tid_2_thread.get(tid, dict())
+            bump_time = thread.get('last_modified', thread.get('time', 0))
+            hit_bump_limit = bool(thread.get('bumplimit', 0))
+            self.thread_meta[board][tid] = [page, bump_time, hit_bump_limit]
+
+        self.prune_old_thread_meta(board)
+
+    def prune_old_thread_meta(self, board: str):
+        """don't let the dict grow over N entries per board."""
+        if board not in self.thread_meta:
+            return
+
+        N = 200
+        board_meta = self.thread_meta[board]
+        if (count := len(board_meta)) > N:
+            # delete the oldest threads based on bump_time (index 1 in the list)
+            M = count - N + 10
+            tid_bump_pairs = [(tid, meta[1] if meta and len(meta) > 1 else 0) for tid, meta in board_meta.items()]
+            tid_bump_pairs.sort(key=lambda pair: pair[1])
+            for stale_id, _ in tid_bump_pairs[:M]:
+                del board_meta[stale_id]
+
+    def get_thread_meta(self, board: str, tid: int) -> list | None:
+        """returns [page, bump_time, hit_bump_limit] or None if not tracked."""
+        if board not in self.thread_meta:
+            return
+        return self.thread_meta[board].get(tid)
+
+    def remove_thread_meta(self, board: str, tid: int):
+        """remove thread from tracking after deletion/archive/prune."""
+        if board in self.thread_meta and tid in self.thread_meta[board]:
+            del self.thread_meta[board][tid]
 
 
 class Fetcher:
@@ -262,6 +364,52 @@ class Fetcher:
             self.session = Session()
 
 
+class Archive:
+    def __init__(self, fetcher: Fetcher, board: str):
+        self.fetcher = fetcher
+        self.board = board
+        self.has_archive: bool = board in configs.boards_with_archive
+        self.archived_tids: set[int] | None = None
+        self.fetching_archive_failed: bool = False
+
+    def board_supports_archive(self) -> bool:
+        return self.has_archive and not self.fetching_archive_failed
+
+    def is_archived(self, tid: int) -> bool:
+        """
+        Lazy-fetches archive.json on first call and keeps results for other threads.
+        """
+        # avoid boards with no archive support
+        if not self.board_supports_archive():
+            return False
+
+        if self.archived_tids is None:
+            self.fetch_and_set_archive()
+
+        if self.archived_tids is None:
+            return False
+
+        return tid in self.archived_tids
+
+    def fetch_and_set_archive(self):
+        url = configs.url_archive.format(board=self.board)
+        configs.logger.info(f'[{self.board}] Fetching archive.json')
+        data = self.fetcher.fetch_json(
+            url,
+            headers=configs.headers,
+            request_cooldown_sec=configs.request_cooldown_sec,
+            add_random=configs.add_random,
+        )
+
+        if not data or not isinstance(data, list):
+            self.fetching_archive_failed = True
+            configs.logger.info(f'[{self.board}] archive.json not available or empty')
+            return
+
+        self.archived_tids = set(data)
+        configs.logger.info(f'[{self.board}] Loaded {len(self.archived_tids)} archived thread IDs')
+
+
 class Catalog:
     def __init__(self, fetcher: Fetcher, board: str):
         self.fetcher = fetcher
@@ -269,6 +417,7 @@ class Catalog:
         self.board: str = board
         self.catalog: list[dict] = []
         self.tid_2_thread: dict[int, dict] = dict()
+        self.tid_2_page: dict[int, int] = dict()
         self.tid_2_last_replies: dict[int, list[dict]] = dict()
 
 
@@ -305,9 +454,14 @@ class Catalog:
 
 
     def set_tid_2_thread(self):
+        page_i = 1
         for page in self.catalog:
+            page_num = page.get('page', page_i)
+            page_i += 1
             for thread in page['threads']:
-                self.tid_2_thread[thread['no']] = thread
+                tid = thread['no']
+                self.tid_2_thread[tid] = thread
+                self.tid_2_page[tid] = page_num
 
 
     def set_tid_2_last_replies(self):
@@ -334,16 +488,18 @@ class Posts:
             msgspec.convert(post, ChanPost)
 
 
-    def fetch_posts(self):
+    def fetch_posts(self, archive: Archive):
         '''
         - fetches posts from api
         - validates posts from api
+        - classifies lost threads as deleted, pruned, or archived
         - marks deleted posts as deleted in the database
         - uses catalog-based incremental updates when possible
         '''
 
         pids_deleted = []
         tids_deleted = []
+        tids_archived = []
         catalog_update_count = 0
         full_fetch_count = 0
 
@@ -398,8 +554,20 @@ class Posts:
                 continue
 
             if not thread:
-                configs.logger.info(f'[{self.board}] Lost Thread [{tid}]')
-                tids_deleted.append(tid)
+                # thread 404 or empty
+                deletion_type = self.classify_missing_thread(tid, archive)
+
+                if deletion_type == 'archived':
+                    configs.logger.info(f'[{self.board}] Thread [{tid}] archived')
+                    tids_archived.append(tid)
+                elif deletion_type == 'deleted':
+                    configs.logger.info(f'[{self.board}] Thread [{tid}] deleted by moderator')
+                    tids_deleted.append(tid)
+                else:
+                    configs.logger.info(f'[{self.board}] Thread [{tid}] pruned')
+                    tids_deleted.append(tid)
+
+                self.state.remove_thread_meta(self.board, tid)
                 continue
 
             full_fetch_count += 1
@@ -436,7 +604,47 @@ class Posts:
         if tids_deleted:
             self.db.set_threads_deleted(self.board, tids_deleted)
 
+        if tids_archived:
+            self.db.set_threads_archived(self.board, tids_archived)
+
         self.set_pid_2_post()
+
+    def classify_missing_thread(self, tid: int, archive: Archive) -> str:
+        """
+        Returns 'archived', 'deleted', or 'pruned'.
+
+        A missing thread is `probably_deleted` if it was,
+
+            - recently bumped  (`config.thread_delete_bump_age_hours`)
+            - on an early page (`config.thread_delete_page_threshold`)
+            - has not hit bump limit 
+
+        - if not `probably_deleted` -> 'pruned'
+        - if `probably_deleted` AND board has archive -> check archive.json
+        - if in archive -> 'archived', else -> 'deleted'
+        """
+        meta = self.state.get_thread_meta(self.board, tid)
+        if not meta:
+            return 'pruned'
+
+        page, bump_time, hit_bump_limit = meta
+
+        recently_bumped = False
+        if bump_time:
+            hours_since_bump = (time.time() - bump_time) / 3600
+            recently_bumped = hours_since_bump < configs.thread_delete_bump_age_hours
+
+        # page is either None or gte 1
+        on_early_page = page and page < configs.thread_delete_page_threshold
+        probably_deleted = recently_bumped and on_early_page and not hit_bump_limit
+
+        if not probably_deleted:
+            return 'pruned'
+
+        if archive.is_archived(tid):
+            return 'archived'
+
+        return 'deleted'
 
     def can_use_catalog_update(self, thread_data: dict, thread_stats: dict | None, last_replies: list[dict] | None) -> bool:
         if not last_replies or not isinstance(last_replies, list) or len(last_replies) == 0:
@@ -790,11 +998,15 @@ def process_board(board: str, db: RitualDb, fetcher: Fetcher, loop: Loop, state:
     if not catalog.fetch_catalog():
         return
 
+    state.update_thread_meta(board, catalog.tid_2_page, catalog.tid_2_thread)
+
+    archive = Archive(fetcher, board)
+
     filter = Filter(fetcher, db, board, state)
     filter.filter_catalog(catalog)
 
     posts = Posts(db, fetcher, board, filter.tid_2_thread, state, catalog)
-    posts.fetch_posts()
+    posts.fetch_posts(archive)
 
     if configs.boards[board].get('thread_text') != False:
         posts.save_posts()

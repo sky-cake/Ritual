@@ -543,3 +543,21 @@ def create_thumbnail_from_image(image_path: str, out_path: str, width: int=400, 
     except Exception as e:
         if logger:
             logger.error(f'    Error creating thumbnail from {image_path}\n{str(e)}')
+
+
+def fetch_and_save_boards_json(filepath: str, url_boards: str, logger: logging.Logger) -> dict:
+    logger.info(f'Fetching {url_boards}...')
+    resp = requests_get(url_boards, timeout=10)
+    resp.raise_for_status()
+    data = resp.json()
+
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    with open(filepath, 'w', encoding='utf-8') as f:
+        json.dump(data, f)
+
+    logger.info(f'Saved boards.json to {filepath}')
+    return data
+
+
+def load_boards_with_archive(boards_json: dict) -> set[str]:
+    return {b['board'] for b in boards_json.get('boards', []) if b.get('is_archived')}

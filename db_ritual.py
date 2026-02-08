@@ -73,6 +73,16 @@ class RitualDb:
         self.db.run_query_tuple(sql, params=tuple(tids), commit=True)
 
 
+    def set_threads_archived(self, board: str, tids: list[int]) -> None:
+        if not tids:
+            return
+
+        ph = self.db.placeholder
+        placeholders = ','.join([ph] * len(tids))
+        sql = f"update `{board}` set locked = 1 where num in ({placeholders}) and thread_num = num;"
+        self.db.run_query_tuple(sql, params=tuple(tids), commit=True)
+
+
     def upsert_many(self, board: str, rows: list[dict], conflict_col: str, batch_size: int=500):
         if not rows:
             return

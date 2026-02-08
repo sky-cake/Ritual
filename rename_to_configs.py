@@ -59,15 +59,23 @@ unescape_data_b4_db_write = True
 ## 4chan
 url_catalog = "https://a.4cdn.org/{board}/catalog.json"
 url_thread = "https://a.4cdn.org/{board}/thread/{thread_id}.json"
+url_archive = "https://a.4cdn.org/{board}/archive.json"
+url_boards = "https://a.4cdn.org/boards.json"
 url_full_media = "https://i.4cdn.org/{board}/{image_id}{ext}" # str or None
 url_thumbnail = "https://i.4cdn.org/{board}/{image_id}s.jpg" # str or None
+
+
+# A 404'd thread is probably_deleted if all three of these are true:
+thread_delete_page_threshold = 8  # probably_deleted if on pages 1-7 (early pages)
+thread_delete_bump_age_hours = 10 # probably_deleted if bumped within this many hours
 
 ## lainchan
 # url_full_media = "https://lainchan.org/{board}/src/{image_id}{ext}"
 # url_thumbnail = None
 # url_catalog = "https://lainchan.org/{board}/catalog.json"
 # url_thread = "https://lainchan.org/{board}/res/{thread_id}.json"
-
+# url_archive = "https://lainchan.org/{board}/archive.json"
+# url_boards = "https://lainchan.org/boards.json"
 
 logger_name = 'ritual'
 log_file = False # or make_path("ritual.log") if you want to log to files
