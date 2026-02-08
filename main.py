@@ -827,7 +827,6 @@ def main():
             configs.logger.info('Saving state...')
             state.save()
             configs.logger.info('Done')
-            configs.logger.info('Done')
             break
 
         except Exception as e:
