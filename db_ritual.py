@@ -1,4 +1,5 @@
 import asyncio
+import time
 import configs
 from db_base import BaseDb
 from db_mysql import MysqlDb
@@ -51,6 +52,15 @@ class RitualDb:
             for thread_num, num in rows:
                 result[thread_num].add(num)
         return result
+
+
+    def get_recently_active_thread_ids(self, board: str, since_seconds: int = 6 * 3600) -> set[int]:
+        # 6 hours is a long time from an OP to withstand being deleted by a mod
+        # utc epoch seconds
+        cutoff = int(time.time()) - since_seconds
+        sql = f'select distinct thread_num from `{board}` where thread_num = num and deleted = 0 and time > {self.db.placeholder}'
+        rows = self.db.run_query_tuple(sql, params=(cutoff,))
+        return {row[0] for row in rows} if rows else set()
 
 
     def set_posts_deleted(self, board: str, pids: list[int]) -> None:

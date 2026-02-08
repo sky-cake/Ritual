@@ -8,7 +8,7 @@ from requests import Session, JSONDecodeError
 
 import configs
 from db_ritual import RitualDb, create_ritual_db
-from enums import MediaType
+from enums import DeletionType, MediaType
 from utils import (
     ChanPost,
     ChanThread,
@@ -339,7 +339,7 @@ class Fetcher:
                 last_modified_header = resp.headers.get('Last-Modified')
                 if last_modified_header:
                     self.state.set_http_last_modified(url, last_modified_header)
-            configs.logger.warning(f'Not modified (304)')
+            configs.logger.warning(f'Not modified (304) {url}')
             return dict()
 
         if resp.status_code == 200:
@@ -350,10 +350,10 @@ class Fetcher:
             try:
                 return resp.json()
             except JSONDecodeError:
-                configs.logger.warning(f'Failed to parse JSON from {url}')
+                configs.logger.warning(f'Failed to parse JSON (200) {url}')
                 return dict()
 
-        configs.logger.warning(f'Failed to get JSON {resp.status_code=}')
+        configs.logger.warning(f'Failed to get JSON ({resp.status_code}) {url}')
         return dict()
 
     def sleep(self):
@@ -490,9 +490,9 @@ class Posts:
 
     def fetch_posts(self, archive: Archive):
         '''
+        - detects threads missing from catalog (deleted, pruned, or archived)
         - fetches posts from api
         - validates posts from api
-        - classifies lost threads as deleted, pruned, or archived
         - marks deleted posts as deleted in the database
         - uses catalog-based incremental updates when possible
         '''
@@ -506,6 +506,31 @@ class Posts:
         # prefetch existing pids for each thread in one query
         all_tids = list(self.tid_2_thread.keys())
         tid_2_existing_pids = self.db.get_tid_2_existing_pids(self.board, all_tids)
+
+        # detect threads that have disappeared from the catalog
+        catalog_tids = set(self.tid_2_thread.keys())
+        existing_tids = self.db.get_recently_active_thread_ids(self.board) | set(self.state.thread_meta.get(self.board, {}).keys())
+        missing_tids = existing_tids - catalog_tids
+
+        # assumes threads don't disappear from the catalog, then return
+        # missing_tids get removed from self.state after db writes
+        for tid in missing_tids:
+            deletion_type = self.classify_missing_thread(tid, archive)
+
+            if deletion_type == DeletionType.archived:
+                configs.logger.info(f'[{self.board}] Thread [{tid}] archived')
+                tids_archived.append(tid)
+            elif deletion_type == DeletionType.deleted:
+                configs.logger.info(f'[{self.board}] Thread [{tid}] deleted by moderator')
+                tids_deleted.append(tid)
+            elif deletion_type == DeletionType.pruned:
+                # not marked as deleted, this is the natural lifespan of a thread
+                configs.logger.info(f'[{self.board}] Thread [{tid}] pruned')
+            else:
+                configs.logger.info(f'[{self.board}] Thread [{tid}] deleted for unknown reason')
+
+        if missing_tids:
+            configs.logger.info(f'[{self.board}] {len(missing_tids)} thread(s) no longer in catalog')
 
         for tid in self.tid_2_thread:
             thread_data = self.tid_2_thread[tid]
@@ -549,25 +574,8 @@ class Posts:
                 add_random=configs.add_random,
             )
 
-            if thread is None:
-                configs.logger.info(f'[{self.board}] Thread [{tid}] not modified (304)')
-                continue
-
             if not thread:
-                # thread 404 or empty
-                deletion_type = self.classify_missing_thread(tid, archive)
-
-                if deletion_type == 'archived':
-                    configs.logger.info(f'[{self.board}] Thread [{tid}] archived')
-                    tids_archived.append(tid)
-                elif deletion_type == 'deleted':
-                    configs.logger.info(f'[{self.board}] Thread [{tid}] deleted by moderator')
-                    tids_deleted.append(tid)
-                else:
-                    configs.logger.info(f'[{self.board}] Thread [{tid}] pruned')
-                    tids_deleted.append(tid)
-
-                self.state.remove_thread_meta(self.board, tid)
+                # we already log the issue in the fetch_json() call
                 continue
 
             full_fetch_count += 1
@@ -607,25 +615,27 @@ class Posts:
         if tids_archived:
             self.db.set_threads_archived(self.board, tids_archived)
 
+        # remove thread metadata only after db writes
+        for tid in missing_tids:
+            self.state.remove_thread_meta(self.board, tid)
+
         self.set_pid_2_post()
 
-    def classify_missing_thread(self, tid: int, archive: Archive) -> str:
+    def classify_missing_thread(self, tid: int, archive: Archive) -> DeletionType:
         """
-        Returns 'archived', 'deleted', or 'pruned'.
-
         A missing thread is `probably_deleted` if it was,
 
             - recently bumped  (`config.thread_delete_bump_age_hours`)
             - on an early page (`config.thread_delete_page_threshold`)
             - has not hit bump limit 
 
-        - if not `probably_deleted` -> 'pruned'
+        - if not `probably_deleted` -> pruned
         - if `probably_deleted` AND board has archive -> check archive.json
-        - if in archive -> 'archived', else -> 'deleted'
+        - if in archive -> archived, else -> deleted
         """
         meta = self.state.get_thread_meta(self.board, tid)
         if not meta:
-            return 'pruned'
+            return DeletionType.pruned
 
         page, bump_time, hit_bump_limit = meta
 
@@ -639,12 +649,12 @@ class Posts:
         probably_deleted = recently_bumped and on_early_page and not hit_bump_limit
 
         if not probably_deleted:
-            return 'pruned'
+            return DeletionType.pruned
 
         if archive.is_archived(tid):
-            return 'archived'
+            return DeletionType.archived
 
-        return 'deleted'
+        return DeletionType.deleted
 
     def can_use_catalog_update(self, thread_data: dict, thread_stats: dict | None, last_replies: list[dict] | None) -> bool:
         if not last_replies or not isinstance(last_replies, list) or len(last_replies) == 0:
@@ -1000,6 +1010,7 @@ def process_board(board: str, db: RitualDb, fetcher: Fetcher, loop: Loop, state:
 
     state.update_thread_meta(board, catalog.tid_2_page, catalog.tid_2_thread)
 
+    # results in a max of one archive.json endpoint fetch per loop
     archive = Archive(fetcher, board)
 
     filter = Filter(fetcher, db, board, state)
