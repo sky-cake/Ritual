@@ -14,6 +14,7 @@ from utils import get_d_board
 # duplicate asagi.tpl.toml to asagi.toml
 # configure asagi.toml
 from asagi_tables.main import execute_action
+from asagi_tables.db import close_pool as asagi_close_pool
 
 
 class RitualDb:
@@ -35,6 +36,9 @@ class RitualDb:
 
             configs.logger.info('Creating side indexes.')
             await execute_action('side', 'index_add', boards_list, side_tables=side_tables)
+
+            # python process will hang if not closed
+            await asagi_close_pool()
 
         asyncio.run(setup_tables())
         self.db.save()

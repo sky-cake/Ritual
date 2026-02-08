@@ -3,7 +3,7 @@ import re
 import time
 import traceback
 
-from requests import Session
+from requests import Session, JSONDecodeError
 
 import configs
 from db_ritual import RitualDb, create_ritual_db
@@ -246,7 +246,7 @@ class Fetcher:
                     self.state.set_http_last_modified(url, last_modified_header)
             try:
                 return resp.json()
-            except ValueError:
+            except JSONDecodeError:
                 configs.logger.warning(f'Failed to parse JSON from {url}')
                 return dict()
 
@@ -802,6 +802,15 @@ def process_board(board: str, db: RitualDb, fetcher: Fetcher, loop: Loop, state:
     loop.set_board_duration_minutes(board)
 
 
+def save_on_error(state: State, db: RitualDb):
+    configs.logger.info('Saving state...')
+    state.save()
+    configs.logger.info('Done')
+    configs.logger.info('Saving database...')
+    db.save_and_close()
+    configs.logger.info('Done')
+
+
 def main():
     Init()
     db = create_ritual_db()
@@ -824,21 +833,24 @@ def main():
 
         except KeyboardInterrupt:
             configs.logger.info('Received interrupt signal')
-            configs.logger.info('Saving state...')
-            state.save()
-            configs.logger.info('Done')
+            save_on_error(state, db)
             break
 
         except Exception as e:
             configs.logger.error(f'Critical error in main loop: {e}')
             configs.logger.error(traceback.format_exc())
-            state.save()
+            save_on_error(state, db)
             critical_error_count += 1
-            if critical_error_count >= 5:
-                configs.logger.error('Critical error count reached 3, exiting...')
+            n_critical_errors = 5
+            if critical_error_count >= n_critical_errors:
+                configs.logger.error(f'Critical error count reached {n_critical_errors}, exiting...')
                 break
 
-            sleep(critical_error_count * 60)
+            sleep_for = critical_error_count * 60
+            configs.logger.info(f'Sleeping for {sleep_for}s, maybe the issue will resolve itself by then...')
+            sleep(sleep_for)
+
+    configs.logger.info('Exited while loop, ending program.')
 
 
 if __name__=='__main__':
