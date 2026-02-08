@@ -624,7 +624,7 @@ class Posts:
 
             - could be deleted if bumped within N minutes  (`config.not_deleted_if_bump_age_exceeds_n_min`)
             - could be deleted if on early pages           (`config.not_deleted_if_page_n_reached`)
-            - could be deleted if fewer than N replies     (`config.not_deleted_if_n_replies`)
+            - could be deleted if at least N replies        (`config.not_deleted_if_n_replies`)
 
         - if not probably deleted -> pruned
         - if in archive -> archived
@@ -648,7 +648,7 @@ class Posts:
 
         # page is either None or gte 1
         on_early_page = page and page < configs.not_deleted_if_page_n_reached
-        thread_is_popular = replies < configs.not_deleted_if_n_replies
+        thread_is_popular = replies >= configs.not_deleted_if_n_replies
 
         # for threads missing from catalog,
         probably_deleted = thread_got_recent_attention and on_early_page and thread_is_popular
