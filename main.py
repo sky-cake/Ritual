@@ -521,8 +521,8 @@ class Posts:
             elif deletion_type == DeletionType.deleted:
                 tids_deleted.append(tid)
 
-        configs.logger.info(f'[{self.board}] Threads archived: {tids_archived}')
-        configs.logger.info(f'[{self.board}] Threads deleted by moderator: {tids_deleted}')
+        if tids_archived: configs.logger.info(f'[{self.board}] Threads archived: {tids_archived}')
+        if tids_deleted: configs.logger.info(f'[{self.board}] Threads deleted by moderator: {tids_deleted}')
 
         if missing_tids:
             configs.logger.info(f'[{self.board}] {len(missing_tids)} thread(s) no longer in catalog')
@@ -583,7 +583,8 @@ class Posts:
             for pid in pids_all:
                 if pid not in pids_found:
                     pids_deleted.append(pid)
-                    configs.logger.info(f'[{self.board}] Post Deleted [{tid}] [{pid}]')
+
+            if pids_deleted: configs.logger.info(f'[{self.board}] [{tid}] Posts deleted: {pids_deleted}')
 
             self.tid_2_posts[tid] = thread['posts']
 
