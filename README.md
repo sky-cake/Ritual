@@ -4,7 +4,7 @@ Ritual is a 4chan archiver that focuses on simplicity.
 
 Notable features include,
 
-- Built using Python 3.12.
+- Built using Python 3.12+.
 - Uses the Asagi schema
 - Runs in a synchronous, step-by-step manner that's easy read.
 - Minimal dependencies.
@@ -21,13 +21,9 @@ Ritual will create schemas for you. But note, in the future, when you need datab
     - `uv venv`
     - `source .venv/bin/activate`
     - `uv pip install -r requirements.txt`
+        - If you are using mysql, uncomment the mysql-connector package
     - Ritual depends on https://github.com/sky-cake/asagi-tables for Sqlite and MySQL schema creation.
-        - Please consult its documentation for installation and set up - it's very simple. Follow install option 2.
-        - Ritual will run the following asagi-table commands,
-            - `asagi base table add [board(s)]`
-            - `asagi base index add [board(s)]`
-            - `asagi side table add [board(s)]`
-            - `asagi side index add [board(s)]`
+        - Configure the variables in the `install_asagi_tables.sh` file, and then run it.
 1. `python3.12 main.py` to run the scraper.
 
 If you want the program to persist after leaving your shell, you can run Ritual using `screen`, likeso.

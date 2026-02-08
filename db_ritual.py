@@ -5,14 +5,7 @@ from db_mysql import MysqlDb
 from db_sqlite import SqliteDb
 from utils import get_d_board
 
-# TODO: streamline this
-# uv venv
-# source .venv/bin/activate
-# git clone https://github.com/sky-cake/asagi-tables
-# cd asagi-tables
-# uv pip install -e .
-# duplicate asagi.tpl.toml to asagi.toml
-# configure asagi.toml
+# Run ./install_asagi_tables.sh to install asagi-tables
 from asagi_tables.main import execute_action
 from asagi_tables.db import close_pool as asagi_close_pool
 
