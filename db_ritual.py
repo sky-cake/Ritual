@@ -58,7 +58,7 @@ class RitualDb:
         # 1 hour is a long time for an OP to withstand being deleted by a mod
         # utc epoch seconds
         cutoff = int(time.time()) - since_seconds
-        sql = f'select distinct thread_num from `{board}` where thread_num = num and deleted = 0 and timestamp > {self.db.placeholder}'
+        sql = f'select distinct thread_num from `{board}` where thread_num = num and deleted = 0 and locked != 1 and timestamp > {self.db.placeholder}'
         rows = self.db.run_query_tuple(sql, params=(cutoff,))
         return {row[0] for row in rows} if rows else set()
 

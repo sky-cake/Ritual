@@ -470,7 +470,7 @@ class Catalog:
 
 
 class Posts:
-    def __init__(self, db: RitualDb, fetcher: Fetcher, board: str, tid_2_thread: dict[int, dict], state: State, catalog: 'Catalog'):
+    def __init__(self, db: RitualDb, fetcher: Fetcher, board: str, tid_2_thread: dict[int, dict], state: State, catalog: Catalog):
         self.db = db
         self.fetcher = fetcher
         self.board = board
@@ -506,9 +506,10 @@ class Posts:
         tid_2_existing_pids = self.db.get_tid_2_existing_pids(self.board, all_tids)
 
         # detect threads that have disappeared from the catalog
-        catalog_tids = set(self.tid_2_thread.keys())
+        # unfiltered threads
+        catalog_tids = set(self.catalog.tid_2_thread.keys())
         existing_tids = self.db.get_recently_active_thread_ids(self.board) | set(self.state.thread_meta.get(self.board, {}).keys())
-        missing_tids = existing_tids - catalog_tids
+        missing_tids = existing_tids - catalog_tids if catalog_tids else set()
 
         # - assumes threads don't disappear from the catalog, then return
         # - missing_tids get removed from self.state after db writes
@@ -630,10 +631,9 @@ class Posts:
         Note: If any random tid (44, -2, 1e9) is passed into this function, it is inconclusive.
         """
         meta = self.state.get_thread_meta(self.board, tid)
-        if not meta:
-            return DeletionType.inconclusive
-
         page, bump_time = meta
+        if not (page and bump_time):
+            return DeletionType.inconclusive
 
         thread_got_recent_attention = False
         if bump_time:
@@ -641,10 +641,11 @@ class Posts:
             thread_got_recent_attention = minutes_since_bump < configs.not_deleted_if_bump_age_exceeds_n_min
 
         thread_stats = self.state.get_thread_stats(self.board, tid)
-        replies = thread_stats.get('replies', 0) if thread_stats else 0
+        replies = thread_stats.get('replies', -1) if thread_stats else -1
+        if replies == -1:
+            return DeletionType.inconclusive
 
-        # page is either None or gte 1
-        on_early_page = page and page < configs.not_deleted_if_page_n_reached
+        on_early_page = page < configs.not_deleted_if_page_n_reached
         thread_is_popular = replies >= configs.not_deleted_if_n_replies
 
         # for threads missing from catalog,
