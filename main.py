@@ -3,6 +3,7 @@ import re
 import time
 import traceback
 
+import msgspec
 from requests import Session, JSONDecodeError
 
 import configs
@@ -273,7 +274,7 @@ class Catalog:
 
     def validate_threads(self):
         for thread in self.tid_2_thread.values():
-            ChanThread(**thread)
+            msgspec.convert(thread, ChanThread)
 
 
     def fetch_catalog(self) -> bool:
@@ -330,7 +331,7 @@ class Posts:
 
     def validate_posts(self, posts: list[dict]):
         for post in posts:
-            ChanPost(**post)
+            msgspec.convert(post, ChanPost)
 
 
     def fetch_posts(self):
@@ -470,9 +471,9 @@ class Posts:
         posts_to_add = []
         for reply in new_replies:
             try:
-                ChanPost(**reply)
+                msgspec.convert(reply, ChanPost)
                 posts_to_add.append(reply)
-            except Exception as e:
+            except msgspec.ValidationError as e:
                 configs.logger.warning(f'[{self.board}] Invalid post in catalog update for thread [{tid}]: {e}')
                 configs.logger.error(traceback.format_exc())
                 raise e

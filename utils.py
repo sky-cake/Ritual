@@ -15,7 +15,7 @@ from collections import OrderedDict
 from logging.handlers import RotatingFileHandler
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+import msgspec
 from requests import Session
 from requests import get as requests_get
 
@@ -223,18 +223,18 @@ def get_d_image(post: dict, is_op: bool):
     }
 
 
-PositiveInt = Annotated[int, Field(gt=0)]
-NonNegativeInt = Annotated[int, Field(ge=0)]
-ZeroOrOne = Annotated[int, Field(ge=0, le=1)]
+PositiveInt = Annotated[int, msgspec.Meta(gt=0)]
+NonNegativeInt = Annotated[int, msgspec.Meta(ge=0)]
+ZeroOrOne = Annotated[int, msgspec.Meta(ge=0, le=1)]
 
 ExtLiteral = Literal['.jpg', '.png', '.gif', '.pdf', '.swf', '.webm', '.mp4']
 CapcodeLiteral = Literal['mod', 'admin', 'admin_highlight', 'manager', 'developer', 'founder']
 
-ShortStr = Annotated[str, Field(min_length=0, max_length=512)]
-LongStr = Annotated[str, Field(min_length=0, max_length=16_384)]
+ShortStr = Annotated[str, msgspec.Meta(min_length=0, max_length=512)]
+LongStr = Annotated[str, msgspec.Meta(min_length=0, max_length=16_384)]
 
 
-class BasePost(BaseModel):
+class BasePost(msgspec.Struct, kw_only=True):
     no: PositiveInt
     resto: NonNegativeInt
     sticky: ZeroOrOne | None = None
@@ -243,9 +243,9 @@ class BasePost(BaseModel):
     time: PositiveInt
     name: ShortStr | None = None
     trip: ShortStr | None = None
-    id: Annotated[str, Field(max_length=32)] | None = None
+    id: Annotated[str, msgspec.Meta(max_length=32)] | None = None
     capcode: CapcodeLiteral | None = None
-    country: Annotated[str, Field(min_length=2, max_length=2)] | None = None
+    country: Annotated[str, msgspec.Meta(min_length=2, max_length=2)] | None = None
     country_name: ShortStr | None = None
     sub: ShortStr | None = None
     com: LongStr | None = None
@@ -253,14 +253,14 @@ class BasePost(BaseModel):
     filename: ShortStr | None = None
     ext: ExtLiteral | None = None
     fsize: PositiveInt | None = None
-    md5: Annotated[str, Field(min_length=24, max_length=24)] | None = None
+    md5: Annotated[str, msgspec.Meta(min_length=24, max_length=24)] | None = None
     w: PositiveInt | None = None
     h: PositiveInt | None = None
     tn_w: PositiveInt | None = None
     tn_h: PositiveInt | None = None
     filedeleted: ZeroOrOne | None = None
     spoiler: ZeroOrOne | None = None
-    custom_spoiler: Annotated[int, Field(ge=1, le=10)] | None = None
+    custom_spoiler: Annotated[int, msgspec.Meta(ge=1, le=10)] | None = None
     m_img: ZeroOrOne | None = None
 
     replies: NonNegativeInt | None = None
@@ -269,7 +269,7 @@ class BasePost(BaseModel):
     imagelimit: ZeroOrOne | None = None
     tag: ShortStr | None = None
     semantic_url: ShortStr | None = None
-    since4pass: Annotated[int, Field(ge=2000, le=2099)] | None = None
+    since4pass: Annotated[int, msgspec.Meta(ge=2000, le=2099)] | None = None
     unique_ips: PositiveInt | None = None
 
 
