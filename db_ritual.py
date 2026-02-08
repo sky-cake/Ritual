@@ -58,7 +58,7 @@ class RitualDb:
         # 6 hours is a long time from an OP to withstand being deleted by a mod
         # utc epoch seconds
         cutoff = int(time.time()) - since_seconds
-        sql = f'select distinct thread_num from `{board}` where thread_num = num and deleted = 0 and time > {self.db.placeholder}'
+        sql = f'select distinct thread_num from `{board}` where thread_num = num and deleted = 0 and timestamp > {self.db.placeholder}'
         rows = self.db.run_query_tuple(sql, params=(cutoff,))
         return {row[0] for row in rows} if rows else set()
 
@@ -81,6 +81,17 @@ class RitualDb:
         placeholders = ','.join([ph] * len(tids))
         sql = f"update `{board}` set deleted = 1 where num in ({placeholders});"
         self.db.run_query_tuple(sql, params=tuple(tids), commit=True)
+
+
+    def set_threads_expired(self, board: str, tids: list[int]) -> None:
+        if not tids:
+            return
+
+        ph = self.db.placeholder
+        placeholders = ','.join([ph] * len(tids))
+        now = int(time.time())
+        sql = f"update `{board}` set timestamp_expired = {ph} where thread_num in ({placeholders}) and timestamp_expired = 0;"
+        self.db.run_query_tuple(sql, params=(now, *tids), commit=True)
 
 
     def set_threads_archived(self, board: str, tids: list[int]) -> None:
