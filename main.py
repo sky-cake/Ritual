@@ -495,7 +495,6 @@ class Posts:
         - uses catalog-based incremental updates when possible
         '''
 
-        pids_deleted = []
         tids_deleted = []
         tids_archived = []
         catalog_update_count = 0
@@ -580,6 +579,7 @@ class Posts:
 
             pids_found = {post['no'] for post in thread['posts']}
             pids_all = tid_2_existing_pids.get(tid, set())
+            pids_deleted = []
             for pid in pids_all:
                 if pid not in pids_found:
                     pids_deleted.append(pid)
