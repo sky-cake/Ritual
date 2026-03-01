@@ -1,8 +1,11 @@
-import pytest
-from types import SimpleNamespace
-from main import Catalog, Filter, State, Loop, Fetcher, Posts
 import json
+from types import SimpleNamespace
+
+import pytest
+
+from main import Catalog, Fetcher, Filter, Loop, Posts, State
 from utils import make_path
+
 
 @pytest.fixture
 def mock_configs(monkeypatch):

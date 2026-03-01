@@ -1,14 +1,18 @@
 import json
 import tempfile
 from types import SimpleNamespace
-from unittest.mock import Mock, patch, AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from main import Catalog, Filter, Posts, State, Loop, Fetcher
+from catalog import Catalog
 from db.ritual import RitualDb
-from utils import make_path
 from enums import MediaType
+from fetcher import Fetcher
+from filter import Filter
+from loop import Loop
+from posts import Posts
+from state import State
 from tests.conftest import create_test_sqlite_db
 
 
@@ -35,6 +39,8 @@ def mock_configs(monkeypatch):
     )
     monkeypatch.setattr('main.configs', cfg)
     monkeypatch.setattr('db.ritual.configs', cfg)
+    monkeypatch.setattr('filter.configs', cfg)
+
     return cfg
 
 
