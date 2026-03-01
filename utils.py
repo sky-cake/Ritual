@@ -123,18 +123,34 @@ def convert_to_asagi_comment(a):
     return a
 
 
-def post_has_file(post: dict) -> bool:
-    return post.get('tim') and post.get('ext')
-
-
-def get_fs_filename_full_media(post: dict) -> str | None:
+def get_asagi_value_media(post: dict) -> str | None:
     if post_has_file(post):
         return f"{post.get('tim')}{post.get('ext')}"
 
 
-def get_fs_filename_thumbnail(post: dict) -> str | None:
+def get_asagi_value_preview(post: dict) -> str | None:
     if post_has_file(post):
         return f"{post.get('tim')}s.jpg"
+
+
+digits = '0123456789'
+def get_filepath(media_save_path: str, board: str, media_type: MediaType, post: dict) -> str:
+    """
+    - Will create filepath directories if they don't exist.
+    - Calls to this function must ensure `post_has_file(post) == True`
+    """
+    filename = get_asagi_value_media(post) if media_type == MediaType.full_media else get_asagi_value_preview(post)
+
+    tim = filename.rsplit('.', maxsplit=1)[0]
+    assert len(tim) >= 6 and all(t in digits for t in tim[:6])
+    dir_path = make_path(media_save_path, board, media_type.value, filename[:4], filename[4:6])
+    os.makedirs(dir_path, mode=775, exist_ok=True)
+    os.chmod(dir_path, 0o775)
+    return os.path.join(dir_path, filename)
+
+
+def post_has_file(post: dict) -> bool:
+    return post.get('tim') and post.get('ext')
 
 
 def create_thumbnail(post: dict, full_path: str, thumb_path: str, logger=None):
@@ -153,18 +169,6 @@ def create_thumbnail(post: dict, full_path: str, thumb_path: str, logger=None):
         return
 
 
-digits = '0123456789'
-def get_filepath(media_save_path: str, board: str, media_type: MediaType, filename: str) -> str:
-    """Will create filepath directories if they don't exist."""
-    tim = filename.rsplit('.', maxsplit=1)[0]
-    assert len(tim) >= 6 and all(t in digits for t in tim[:6])
-    dir_path = make_path(media_save_path, board, media_type.value, filename[:4], filename[4:6])
-    os.makedirs(dir_path, mode=775, exist_ok=True)
-    os.chmod(dir_path, 0o775)
-    return os.path.join(dir_path, filename)
-
-
-
 def get_d_board(post: dict, media_id: int | None = None, unescape_data_b4_db_write: bool=True):
     return {
         # 'doc_id': post.get('doc_id'), # autoincremented
@@ -176,7 +180,7 @@ def get_d_board(post: dict, media_id: int | None = None, unescape_data_b4_db_wri
         'op': 1 if post.get('resto') == 0 else 0,
         'timestamp': post.get('time', 0),
         'timestamp_expired': post.get('archived_on', 0),
-        'preview_orig': get_fs_filename_thumbnail(post),
+        'preview_orig': get_asagi_value_preview(post),
         'preview_w': post.get('tn_w', 0),
         'preview_h': post.get('tn_h', 0),
         'media_filename': html.unescape(f"{post.get('filename')}{post.get('ext')}") if post.get('filename') and post.get('ext') and unescape_data_b4_db_write else None,
@@ -184,7 +188,7 @@ def get_d_board(post: dict, media_id: int | None = None, unescape_data_b4_db_wri
         'media_h': post.get('h', 0),
         'media_size': post.get('fsize', 0),
         'media_hash': post.get('md5'),
-        'media_orig': get_fs_filename_full_media(post),
+        'media_orig': get_asagi_value_media(post),
         'spoiler': post.get('spoiler', 0),
         'deleted': post.get('filedeleted', 0),
         'capcode': convert_to_asagi_capcode(post.get('capcode')),
@@ -215,9 +219,9 @@ def get_d_image(post: dict, is_op: bool):
     return {
         # 'media_id': post.get('media_id'), # autoincremented
         'media_hash': post.get('md5'),
-        'media': get_fs_filename_full_media(post),
-        'preview_op': get_fs_filename_thumbnail(post) if is_op else None,
-        'preview_reply': get_fs_filename_thumbnail(post) if not is_op else None,
+        'media': get_asagi_value_media(post),
+        'preview_op': get_asagi_value_preview(post) if is_op else None,
+        'preview_reply': get_asagi_value_preview(post) if not is_op else None,
         'total': 0,
         'banned': 0,
     }
@@ -393,34 +397,17 @@ def get_random_querystring() -> str:
     return f'{get_n_random_chars(5)}={get_n_random_chars(5)}'
 
 
-def get_url_and_filename(configs, board: str, post: dict, media_type: MediaType):
+def get_url(configs, board: str, post: dict, media_type: MediaType) -> str:
     if media_type == MediaType.thumbnail:
         url = configs.url_thumbnail.format(board=board, image_id=post['tim']) # ext is always .jpg
-        filename = get_fs_filename_thumbnail(post)
-
     elif media_type == MediaType.full_media:
         url = configs.url_full_media.format(board=board, image_id=post['tim'], ext=post['ext'])
-        filename = get_fs_filename_full_media(post)
-
     else:
         raise ValueError(media_type)
 
-    # avoid cloudflare's recompressed media
+    # try to avoid cloudflare's recompressed media
     url = f'{url}?{get_random_querystring()}'
-    return url, filename
-
-
-def get_filename(post: dict, media_type: MediaType) -> str | None:
-    if media_type == MediaType.thumbnail:
-        filename = get_fs_filename_thumbnail(post)
-
-    elif media_type == MediaType.full_media:
-        filename = get_fs_filename_full_media(post)
-
-    else:
-        raise ValueError(media_type)
-
-    return filename
+    return url
 
 
 def get_md5_hash_bytes(content: bytes) -> str:

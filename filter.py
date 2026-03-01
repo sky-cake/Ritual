@@ -12,11 +12,9 @@ from utils import (
     download_file,
     extract_text_from_html,
     fullmatch_sub_and_com,
-    get_filename,
     get_filepath,
-    get_fs_filename_full_media,
-    get_fs_filename_thumbnail,
-    get_url_and_filename,
+    get_asagi_value_media,
+    get_url,
     post_has_file,
     sleep
 )
@@ -39,7 +37,6 @@ class Filter:
         self.full_pids: set[int] = set()
         self.thumb_pids: set[int] = set()
 
-        self.md5_2_media_filename: dict[str, str] = dict()
         self.banned_hashes: set[str] = set()
 
     def set_tid_2_posts(self, tid_2_posts: dict[int, list[dict]]):
@@ -119,7 +116,7 @@ class Filter:
             return False
 
         return True
-    
+
 
     def is_media_needed_simple(self, post: dict, pattern_or_bool: str | bool) -> bool:
         """Only based on config rules."""
@@ -134,13 +131,13 @@ class Filter:
 
     def is_media_needed(self, post: dict, pattern_or_bool: str | bool, media_type: MediaType) -> bool:
         """
-        - Post text does not match pattern    -> skip download
-        - Hash banned                         -> skip download
-        - Hash archived + stored file exists  -> skip download
-        - Hash archived + stored file missing -> download
-        - Hash not archived + file missing    -> download
-        - Hash not archived + file exists     -> skip download
+        - Post text does not match pattern  -> skip download
+        - Hash banned                       -> skip download
+        - File missing                      -> download
+        - File exists                       -> skip download
         """
+        # post_has_file(post) is called in parent function, get_filepath() rules are followed
+
         if not self.is_media_needed_simple(post, pattern_or_bool):
             return False
 
@@ -150,23 +147,8 @@ class Filter:
                 if media_hash in self.banned_hashes:
                     return False
 
-                if configs.skip_duplicate_files and media_hash in self.md5_2_media_filename:
-                    stored_filepath = get_filepath(
-                        configs.media_save_path,
-                        self.board,
-                        media_type,
-                        self.md5_2_media_filename[media_hash], # stored filename
-                    )
-                    if os.path.isfile(stored_filepath):
-                        return False
-
-        filename = get_filename(post, media_type)
-        filepath = get_filepath(configs.media_save_path, self.board, media_type, filename)
-
-        if os.path.isfile(filepath):
-            return False
-
-        return True
+        filepath = get_filepath(configs.media_save_path, self.board, media_type, post)
+        return not os.path.isfile(filepath)
 
 
     def get_pids_for_download(self):
@@ -186,10 +168,7 @@ class Filter:
                 if post_has_file(post) and post.get('md5'):
                     media_hashes.append(post['md5'])
 
-        # query still needed for checking banned media hashes
-        self.md5_2_media_filename, self.banned_hashes = self.db.get_media_hash_info(self.board, media_hashes)
-        if not configs.skip_duplicate_files:
-            self.md5_2_media_filename = dict()
+        self.banned_hashes = self.db.get_banned_hashes(self.board, media_hashes)
 
         for tid, posts in self.tid_2_posts.items():
             should_dl_fm_thread = self.is_media_needed_simple(self.tid_2_thread[tid], dl_fm_thread)
@@ -232,8 +211,12 @@ class Filter:
 
 
     def download_post_file(self, post: dict, media_type: MediaType) -> bool:
-        url, filename = get_url_and_filename(configs, self.board, post, media_type)
-        filepath = get_filepath(configs.media_save_path, self.board, media_type, filename)
+        url = get_url(configs, self.board, post, media_type)
+
+        if not post_has_file(post):
+            return False
+
+        filepath = get_filepath(configs.media_save_path, self.board, media_type, post)
 
         if os.path.isfile(filepath):
             return True
@@ -262,11 +245,10 @@ class Filter:
         if media_type == MediaType.full_media:
             media_hash = post.get('md5')
             if media_hash:
-                media = get_fs_filename_full_media(post)
+                media = get_asagi_value_media(post)
                 self.db.upsert_image(self.board, media_hash, media)
 
             if configs.make_thumbnails:
-                thumb_path = get_filepath(configs.media_save_path, self.board, MediaType.thumbnail, get_fs_filename_thumbnail(post))
+                thumb_path = get_filepath(configs.media_save_path, self.board, MediaType.thumbnail, post)
                 sleep(0.1, add_random=configs.add_random)
                 create_thumbnail(post, filepath, thumb_path, logger=configs.logger)
-

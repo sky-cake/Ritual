@@ -35,7 +35,6 @@ def mock_configs(monkeypatch):
         db_path=':memory:',
         unescape_data_b4_db_write=True,
         loop_cooldown_sec=0,
-        skip_duplicate_files=False,
     )
     monkeypatch.setattr('main.configs', cfg)
     monkeypatch.setattr('db.ritual.configs', cfg)
@@ -260,7 +259,6 @@ class TestFilter:
         
         post = {'no': 1, 'tim': 123456, 'ext': '.jpg', 'md5': 'testhash123', 'sub': 'test', 'com': 'test'}
         stored_filename = '123456.jpg'
-        filter_obj.md5_2_media_filename = {'testhash123': stored_filename}
         
         media_dir = tmp_path / 'po' / 'image' / '1234' / '56'
         media_dir.mkdir(parents=True, exist_ok=True)

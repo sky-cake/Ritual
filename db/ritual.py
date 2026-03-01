@@ -139,33 +139,22 @@ class RitualDb:
         return {row[0] for row in rows} if rows else set()
 
 
-    def get_media_hash_info(self, board: str, media_hashes: list[str]) -> tuple[dict[str, str], set[str]]:
+    def get_banned_hashes(self, board: str, media_hashes: list[str]) -> set[str]:
         if not media_hashes:
-            return dict(), set()
+            return set()
 
         ph = self.db.placeholder
         placeholders = ','.join([ph] * len(media_hashes))
         sql = f"""
-            select media_hash, media, banned
+            select media_hash
             from `{board}_images`
-            where media_hash in ({placeholders});
+            where media_hash in ({placeholders}) and banned = 1;
         """
         rows = self.db.run_query_tuple(sql, params=tuple(media_hashes))
         if not rows:
-            return dict(), set()
+            return set()
 
-        md5_2_media_filename = dict()
-        banned_hashes = set()
-        for row in rows:
-            hash_val = row[0]
-            media_filename = row[1]
-            banned_val = row[2]
-            if media_filename:
-                md5_2_media_filename[hash_val] = media_filename
-            if banned_val != 0:
-                banned_hashes.add(hash_val)
-
-        return md5_2_media_filename, banned_hashes
+        return set([row[0] for row in rows])
 
 
     def upsert_image(self, board: str, media_hash: str, media: str | None):
