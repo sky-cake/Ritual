@@ -1,9 +1,9 @@
 import asyncio
 import time
 import configs
-from db_base import BaseDb
-from db_mysql import MysqlDb
-from db_sqlite import SqliteDb
+from db.base import BaseDb
+from db.mysql import MysqlDb
+from db.sqlite import SqliteDb
 from utils import get_d_board
 
 # Run ./install_asagi_tables.sh to install asagi-tables

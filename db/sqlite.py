@@ -1,7 +1,7 @@
 import functools
 import sqlite3
 
-from db_base import BaseDb, DotDict
+from db.base import BaseDb, DotDict
 
 
 def row_factory(cursor, row: tuple):

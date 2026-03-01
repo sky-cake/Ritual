@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from db_ritual import RitualDb
-from db_sqlite import SqliteDb
+from db.ritual import RitualDb
+from db.sqlite import SqliteDb
 from utils import make_path
 
 

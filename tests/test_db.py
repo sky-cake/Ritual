@@ -3,7 +3,7 @@ from unittest.mock import patch, AsyncMock
 
 import pytest
 
-from db_ritual import RitualDb
+from db.ritual import RitualDb
 from tests.conftest import create_test_sqlite_db
 
 
@@ -14,15 +14,15 @@ def mock_configs(monkeypatch):
         logger=SimpleNamespace(info=lambda s: None),
         unescape_data_b4_db_write=True,
     )
-    monkeypatch.setattr('db_ritual.configs', cfg)
+    monkeypatch.setattr('db.ritual.configs', cfg)
     return cfg
 
 
 @pytest.fixture
 def db(mock_configs, monkeypatch):
     # Mock the async table creation to avoid asagi_tables dependency in tests
-    monkeypatch.setattr('db_ritual.execute_action', AsyncMock())
-    monkeypatch.setattr('db_ritual.asagi_close_pool', AsyncMock())
+    monkeypatch.setattr('db.ritual.execute_action', AsyncMock())
+    monkeypatch.setattr('db.ritual.asagi_close_pool', AsyncMock())
     
     sqlite_db = create_test_sqlite_db('test')
     return RitualDb(sqlite_db)
@@ -94,7 +94,7 @@ class TestRitualDb:
             'closed': 0,
         }
         
-        with patch('db_ritual.get_d_board') as mock_get_d_board:
+        with patch('db.ritual.get_d_board') as mock_get_d_board:
             mock_get_d_board.return_value = {
                 'media_id': 0,
                 'poster_ip': '0',

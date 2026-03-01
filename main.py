@@ -7,7 +7,7 @@ import msgspec
 from requests import Session, JSONDecodeError
 
 import configs
-from db_ritual import RitualDb, create_ritual_db
+from db.ritual import RitualDb, create_ritual_db
 from enums import DeletionType, MediaType
 from utils import (
     ChanPost,

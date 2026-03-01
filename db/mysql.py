@@ -1,7 +1,7 @@
 import functools
 import mysql.connector
 
-from db_base import BaseDb, DotDict
+from db.base import BaseDb, DotDict
 
 
 class MysqlDb(BaseDb):

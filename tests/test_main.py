@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch, AsyncMock
 import pytest
 
 from main import Catalog, Filter, Posts, State, Loop, Fetcher
-from db_ritual import RitualDb
+from db.ritual import RitualDb
 from utils import make_path
 from enums import MediaType
 from tests.conftest import create_test_sqlite_db
@@ -34,7 +34,7 @@ def mock_configs(monkeypatch):
         skip_duplicate_files=False,
     )
     monkeypatch.setattr('main.configs', cfg)
-    monkeypatch.setattr('db_ritual.configs', cfg)
+    monkeypatch.setattr('db.ritual.configs', cfg)
     return cfg
 
 
@@ -68,8 +68,8 @@ def state(loop):
 @pytest.fixture
 def db(mock_configs, monkeypatch):
     # Mock the async table creation to avoid asagi_tables dependency in tests
-    monkeypatch.setattr('db_ritual.execute_action', AsyncMock())
-    monkeypatch.setattr('db_ritual.asagi_close_pool', AsyncMock())
+    monkeypatch.setattr('db.ritual.execute_action', AsyncMock())
+    monkeypatch.setattr('db.ritual.asagi_close_pool', AsyncMock())
     
     sqlite_db = create_test_sqlite_db('po')
     return RitualDb(sqlite_db)
