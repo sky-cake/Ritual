@@ -1,0 +1,10 @@
+db_path = "/path/to/scanner.db"
+root_path = "/path/to/scan"
+skip_dirnames = "thumb"
+file_exts = "jpeg,jpg,png,gif,webm,mp4"
+file_read_buffer_size = 5_000_000
+gather_filesystem_batch_size = 25_000
+gather_metadata_batch_size = 500
+
+# verify the loaded configs with the user before running?
+prompt = true
