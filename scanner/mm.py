@@ -1,7 +1,7 @@
 import os
 
 
-class Path:
+class MediaMeta:
     __slots__ = (
         'dirpath',
         'filename_no_ext',
@@ -9,11 +9,10 @@ class Path:
         'dir_id',
         'ext_id',
 
+        'md5_b64_given',
+        'md5_b64_computed',
         'sha256',
-        'md5_b64',
         'bsize',
-        'w',
-        'h',
     )
 
     def __init__(self, dirpath, filename_no_ext, ext, dir_id, ext_id):
@@ -23,11 +22,10 @@ class Path:
         self.dir_id = dir_id
         self.ext_id = ext_id
 
+        self.md5_b64_given = None
+        self.md5_b64_computed = None
         self.sha256 = None
-        self.md5_b64 = None
         self.bsize = None
-        self.w = None
-        self.h = None
 
     @property
     def fullpath(self) -> str:
