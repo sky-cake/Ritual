@@ -154,7 +154,7 @@ class RitualDb:
         if not rows:
             return set()
 
-        return set([row[0] for row in rows])
+        return set([row[0] for row in rows if row[0]])
 
 
     def upsert_image(self, board: str, media_hash: str, media: str | None):

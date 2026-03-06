@@ -20,6 +20,7 @@ from requests import Session
 from requests import get as requests_get
 
 from enums import MediaType
+from logging import Logger
 
 
 def is_post_media_file_video(post):
@@ -293,7 +294,7 @@ class ChanThread(BasePost):
     last_replies: list[ChanPost] | None = None
 
 
-def assert_thumbnail_deps(logger: logging.Logger):
+def assert_thumbnail_deps(logger: Logger):
     ffmpeg_path = subprocess.run(['which', 'ffmpeg'], capture_output=True, text=True).stdout.strip()
     convert_path = subprocess.run(['which', 'convert'], capture_output=True, text=True).stdout.strip()
     logger.info(f'FFmpeg Path: {ffmpeg_path}')
@@ -344,7 +345,7 @@ def sleep(t: int, add_random: bool=False):
     time.sleep(t)
 
 
-def log_util(logger: logging.Logger, message: str):
+def log_util(logger: Logger, message: str):
     if logger:
         logger.warning(message)
     else:
@@ -397,11 +398,11 @@ def get_random_querystring() -> str:
     return f'{get_n_random_chars(5)}={get_n_random_chars(5)}'
 
 
-def get_url(configs, board: str, post: dict, media_type: MediaType) -> str:
+def get_media_url(url_format: str, board: str, post: dict, media_type: MediaType) -> str:
     if media_type == MediaType.thumbnail:
-        url = configs.url_thumbnail.format(board=board, image_id=post['tim']) # ext is always .jpg
+        url = url_format.format(board=board, image_id=post['tim']) # ext is always .jpg
     elif media_type == MediaType.full_media:
-        url = configs.url_full_media.format(board=board, image_id=post['tim'], ext=post['ext'])
+        url = url_format.format(board=board, image_id=post['tim'], ext=post['ext'])
     else:
         raise ValueError(media_type)
 
@@ -410,62 +411,57 @@ def get_url(configs, board: str, post: dict, media_type: MediaType) -> str:
     return url
 
 
-def get_md5_hash_bytes(content: bytes) -> str:
-    hash_obj = hashlib.md5()
-    hash_obj.update(content)
-    return base64.b64encode(hash_obj.digest()).decode('ascii')
+def get_md5_b64_hash(content: bytes) -> str:
+    return base64.b64encode(hashlib.md5(content).digest()).decode('ascii')
 
 
-def download_file(
+def get_sha256_hash(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
+
+
+def download_to_memory(url: str, session: Session, headers: dict | None) -> bytes | None:
+    resp = session.get(url, headers=headers)
+    if resp.status_code >= 400:
+        return
+    return resp.content
+
+
+def fetch_media_bytes(
     url: str,
-    filepath: str,
+    ext: str,
     video_cooldown_sec: float=3.2,
     image_cooldown_sec: float=2.2,
     headers: dict | None=None,
-    logger: logging.Logger | None=None,
+    logger: Logger | None=None,
     session: Session | None=None,
-    expected_size: int | None=None,
-    expected_md5: str | None=None,
-    download_files_with_mismatched_md5: bool=False,
-) -> bool:
-    ts = video_cooldown_sec if is_video_path(filepath) else image_cooldown_sec if is_image_path(filepath) else 2.0
-
+) -> bytes | None:
+    """Handles sleeping after requests"""
     resp = session.get(url, headers=headers) if session else requests_get(url, headers=headers)
 
     if resp.status_code != 200:
         log_util(logger, f'{url=} {resp.status_code=}')
-        return False
+        return
 
     if not resp.content:
-        return False
+        return
 
-    content = resp.content
-
-    if len(content) > expected_size:
-        log_util(logger, f'File size large than expected {url=} {filepath=} expected={expected_size} got={len(content)}. Skipping.')
-        return False
-
-    if expected_md5:
-        file_hash = get_md5_hash_bytes(content)
-        if file_hash != expected_md5:
-            if download_files_with_mismatched_md5:
-                log_util(logger, f'Hashes differ: {url=} {filepath=} told={expected_md5} found={file_hash}')
-            return download_files_with_mismatched_md5
-
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
-    with open(filepath, 'wb') as f:
-        f.write(content)
-    
-    sleep(ts)
-    return True
+    time_to_sleep = video_cooldown_sec if is_video_path(ext) else image_cooldown_sec if is_image_path(ext) else 2.0
+    sleep(time_to_sleep)
+    return resp.content
 
 
+video_exts = ('webm', 'mp4', 'gif')
 def is_video_path(path: str) -> bool:
-    return path.endswith(('webm', 'mp4', 'gif'))
+    return path.endswith(video_exts)
 
 
+image_exts = ('jpg', 'jpeg', 'png', 'webp', 'bmp')
 def is_image_path(path: str) -> bool:
-    return path.endswith(('jpg', 'jpeg', 'png', 'webp', 'bmp'))
+    return path.endswith(image_exts)
+
+
+def makedir_p(dir: str):
+    os.makedirs(dir, mode=0o775, exist_ok=True)
 
 
 class MaxQueue:
@@ -532,7 +528,7 @@ def create_thumbnail_from_image(image_path: str, out_path: str, width: int=400, 
             logger.error(f'    Error creating thumbnail from {image_path}\n{str(e)}')
 
 
-def fetch_and_save_boards_json(filepath: str, url_boards: str, logger: logging.Logger) -> dict:
+def fetch_and_save_boards_json(filepath: str, url_boards: str, logger: Logger) -> dict:
     logger.info(f'Fetching {url_boards}...')
     resp = requests_get(url_boards, timeout=10)
     resp.raise_for_status()

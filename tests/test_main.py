@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -14,6 +15,24 @@ from loop import Loop
 from posts import Posts
 from state import State
 from tests.conftest import create_test_sqlite_db
+
+
+class MockMediaFP:
+    def __init__(self, media_save_path):
+        self.media_save_path = media_save_path
+
+    def is_media_needed(self, post, media_type, board):
+        if not post.get('tim') or not post.get('ext'):
+            return False
+        filename = f"{post['tim']}{post['ext']}" if media_type == MediaType.full_media else f"{post['tim']}s.jpg"
+        tim = filename.rsplit('.', maxsplit=1)[0]
+        filepath = os.path.join(self.media_save_path, board, media_type.value, tim[:4], tim[4:6], filename)
+        return not os.path.isfile(filepath)
+
+
+@pytest.fixture
+def mock_media(mock_configs):
+    return MockMediaFP(mock_configs.media_save_path)
 
 
 @pytest.fixture
@@ -201,48 +220,49 @@ class TestState:
 
 
 class TestFilter:
-    def test_should_archive_whitelist(self, mock_fetcher, db, state, mock_configs):
+    def test_should_archive_whitelist(self, mock_fetcher, db, state, mock_configs, mock_media):
         mock_configs.boards['po'] = {'whitelist': 'origami|paper'}
-        filter_obj = Filter(mock_fetcher, db, 'po', state)
+        filter_obj = Filter(mock_fetcher, db, 'po', state, mock_media)
         
         assert filter_obj.should_archive('origami discussion', '')
         assert filter_obj.should_archive('', 'paper craft')
         assert not filter_obj.should_archive('random', 'topic')
 
-    def test_should_archive_blacklist(self, mock_fetcher, db, state, mock_configs):
+    def test_should_archive_blacklist(self, mock_fetcher, db, state, mock_configs, mock_media):
         mock_configs.boards['po'] = {'blacklist': 'spam'}
-        filter_obj = Filter(mock_fetcher, db, 'po', state)
+        filter_obj = Filter(mock_fetcher, db, 'po', state, mock_media)
         
         assert not filter_obj.should_archive('spam thread', '')
         assert not filter_obj.should_archive('', 'this is spam')
         assert filter_obj.should_archive('legitimate', 'topic')
 
-    def test_should_archive_blacklist_overrides_whitelist(self, mock_fetcher, db, state, mock_configs):
+    def test_should_archive_blacklist_overrides_whitelist(self, mock_fetcher, db, state, mock_configs, mock_media):
         mock_configs.boards['po'] = {
             'blacklist': 'spam',
             'whitelist': 'origami'
         }
-        filter_obj = Filter(mock_fetcher, db, 'po', state)
+        filter_obj = Filter(mock_fetcher, db, 'po', state, mock_media)
         
         assert not filter_obj.should_archive('spam origami', '')
 
-    def test_should_archive_min_chars(self, mock_fetcher, db, state, mock_configs):
+    def test_should_archive_min_chars(self, mock_fetcher, db, state, mock_configs, mock_media):
         mock_configs.boards['po'] = {'op_comment_min_chars': 10}
-        filter_obj = Filter(mock_fetcher, db, 'po', state)
+        filter_obj = Filter(mock_fetcher, db, 'po', state, mock_media)
         
         assert not filter_obj.should_archive('', 'short')
         assert filter_obj.should_archive('', 'this is long enough')
 
-    def test_should_archive_min_unique_chars(self, mock_fetcher, db, state, mock_configs):
+    def test_should_archive_min_unique_chars(self, mock_fetcher, db, state, mock_configs, mock_media):
         mock_configs.boards['po'] = {'op_comment_min_chars_unique': 5}
-        filter_obj = Filter(mock_fetcher, db, 'po', state)
+        filter_obj = Filter(mock_fetcher, db, 'po', state, mock_media)
         
         assert not filter_obj.should_archive('', 'aaaa')
         assert filter_obj.should_archive('', 'abcde')
 
-    def test_is_media_needed_file_exists(self, mock_fetcher, db, state, mock_configs, tmp_path):
+    def test_is_media_needed_file_exists(self, mock_fetcher, db, state, mock_configs, tmp_path, mock_media):
         mock_configs.media_save_path = str(tmp_path)
-        filter_obj = Filter(mock_fetcher, db, 'po', state)
+        mock_media.media_save_path = str(tmp_path)
+        filter_obj = Filter(mock_fetcher, db, 'po', state, mock_media)
         
         post = {'no': 1, 'tim': 123456, 'ext': '.jpg', 'sub': 'test', 'com': 'test'}
         
@@ -253,9 +273,10 @@ class TestFilter:
         result = filter_obj.is_media_needed(post, True, MediaType.full_media)
         assert result is False
 
-    def test_is_media_needed_duplicate_hash(self, mock_fetcher, db, state, mock_configs, tmp_path):
+    def test_is_media_needed_duplicate_hash(self, mock_fetcher, db, state, mock_configs, tmp_path, mock_media):
         mock_configs.media_save_path = str(tmp_path)
-        filter_obj = Filter(mock_fetcher, db, 'po', state)
+        mock_media.media_save_path = str(tmp_path)
+        filter_obj = Filter(mock_fetcher, db, 'po', state, mock_media)
         
         post = {'no': 1, 'tim': 123456, 'ext': '.jpg', 'md5': 'testhash123', 'sub': 'test', 'com': 'test'}
         stored_filename = '123456.jpg'
@@ -268,9 +289,10 @@ class TestFilter:
         
         assert result is False
 
-    def test_is_media_needed_pattern_match(self, mock_fetcher, db, state, mock_configs, tmp_path):
+    def test_is_media_needed_pattern_match(self, mock_fetcher, db, state, mock_configs, tmp_path, mock_media):
         mock_configs.media_save_path = str(tmp_path)
-        filter_obj = Filter(mock_fetcher, db, 'po', state)
+        mock_media.media_save_path = str(tmp_path)
+        filter_obj = Filter(mock_fetcher, db, 'po', state, mock_media)
         
         post = {'no': 1, 'tim': 123456, 'ext': '.jpg', 'sub': 'test', 'com': 'wireguard'}
         pattern = '.*wireguard.*'
@@ -393,7 +415,7 @@ class TestLoop:
 
 
 class TestIntegration:
-    def test_full_flow_no_api_calls(self, mock_fetcher, db, state, loop, catalog_json, thread_json, mock_configs):
+    def test_full_flow_no_api_calls(self, mock_fetcher, db, state, loop, catalog_json, thread_json, mock_configs, mock_media):
         mock_configs.boards['po'] = {'thread_text': True}
         
         catalog = Catalog(mock_fetcher, 'po')
@@ -401,7 +423,7 @@ class TestIntegration:
         catalog.set_tid_2_thread()
         catalog.set_tid_2_last_replies()
         
-        filter_obj = Filter(mock_fetcher, db, 'po', state)
+        filter_obj = Filter(mock_fetcher, db, 'po', state, mock_media)
         filter_obj.filter_catalog(catalog)
         
         posts = Posts(db, mock_fetcher, 'po', filter_obj.tid_2_thread, state, catalog)

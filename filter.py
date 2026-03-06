@@ -1,22 +1,14 @@
-import os
 import re
 
 import configs
 from catalog import Catalog
 from db.ritual import RitualDb
-from enums import MediaType
 from fetcher import Fetcher
 from state import State
 from utils import (
-    create_thumbnail,
-    download_file,
     extract_text_from_html,
     fullmatch_sub_and_com,
-    get_filepath,
-    get_asagi_value_media,
-    get_url,
     post_has_file,
-    sleep
 )
 
 
@@ -118,8 +110,8 @@ class Filter:
         return True
 
 
-    def is_media_needed_simple(self, post: dict, pattern_or_bool: str | bool) -> bool:
-        """Only based on config rules."""
+    def is_media_needed_conf(self, post: dict, pattern_or_bool: str | bool) -> bool:
+        """Determines whether media should be downloaded based on a regex or bool from configs."""
         if isinstance(pattern_or_bool, bool):
             return pattern_or_bool
 
@@ -129,29 +121,10 @@ class Filter:
         return False
 
 
-    def is_media_needed(self, post: dict, pattern_or_bool: str | bool, media_type: MediaType) -> bool:
-        """
-        - Post text does not match pattern  -> skip download
-        - Hash banned                       -> skip download
-        - File missing                      -> download
-        - File exists                       -> skip download
-        """
-        # post_has_file(post) is called in parent function, get_filepath() rules are followed
-
-        if not self.is_media_needed_simple(post, pattern_or_bool):
-            return False
-
-        if media_type == MediaType.full_media:
-            media_hash = post.get('md5')
-            if media_hash:
-                if media_hash in self.banned_media_hashes:
-                    return False
-
-        filepath = get_filepath(configs.media_save_path, self.board, media_type, post)
-        return not os.path.isfile(filepath)
-
-
     def get_pids_for_download(self):
+        """
+        Populates `full_pids` and `thumb_pids` with post ids the configs request media for.
+        """
         make_thumbnails = configs.make_thumbnails
 
         dl_fm_op = configs.boards[self.board].get('dl_fm_op')
@@ -168,87 +141,32 @@ class Filter:
                 if post_has_file(post) and post.get('md5'):
                     media_hashes.append(post['md5'])
 
-        self.banned_media_hashes = self.db.get_banned_media_hashes(self.board, media_hashes)
+        # applies to Asagi and Sutra filepath constructs
+        banned_media_hashes = self.db.get_banned_media_hashes(self.board, media_hashes)
 
         for tid, posts in self.tid_2_posts.items():
-            should_dl_fm_thread = self.is_media_needed_simple(self.tid_2_thread[tid], dl_fm_thread)
-            should_dl_th_thread = self.is_media_needed_simple(self.tid_2_thread[tid], dl_th_thread)
+            should_dl_fm_thread = self.is_media_needed_conf(self.tid_2_thread[tid], dl_fm_thread)
+            should_dl_th_thread = self.is_media_needed_conf(self.tid_2_thread[tid], dl_th_thread)
 
             for post in posts:
                 if not post_has_file(post):
                     continue
 
-                if tid == (pid := post['no']):
+                if post['md5'] in banned_media_hashes:
+                    continue
+
+                pid = post['no']
+
+                if tid == pid:
                     pattern_or_bool_full_media = dl_fm_op
                     pattern_or_bool_thumbs = dl_th_op
                 else:
                     pattern_or_bool_full_media = dl_fm_post
                     pattern_or_bool_thumbs = dl_th_post
 
-                if should_dl_fm_thread or self.is_media_needed(post, pattern_or_bool_full_media, MediaType.full_media):
+                if should_dl_fm_thread or self.is_media_needed_conf(post, pattern_or_bool_full_media):
                     self.full_pids.add(pid)
 
                 if not make_thumbnails:
-                    if should_dl_th_thread or self.is_media_needed(post, pattern_or_bool_thumbs, MediaType.thumbnail):
+                    if should_dl_th_thread or self.is_media_needed_conf(post, pattern_or_bool_thumbs):
                         self.thumb_pids.add(pid)
-
-
-    def download_media(self, tid_2_posts: dict[int, list[dict]], pid_2_post: dict[int, dict]):
-        self.set_tid_2_posts(tid_2_posts)
-        self.get_pids_for_download()
-
-        for pid in self.full_pids:
-            if pid not in pid_2_post:
-                configs.logger.info(f'[{self.board}] Post {pid} not found in pid_2_post, skipping full media download')
-                continue
-            self.download_post_file(pid_2_post[pid], MediaType.full_media)
-
-        for pid in self.thumb_pids:
-            if pid not in pid_2_post:
-                configs.logger.info(f'[{self.board}] Post {pid} not found in pid_2_post, skipping thumbnail download')
-                continue
-            self.download_post_file(pid_2_post[pid], MediaType.thumbnail)
-
-
-    def download_post_file(self, post: dict, media_type: MediaType) -> bool:
-        url = get_url(configs, self.board, post, media_type)
-
-        if not post_has_file(post):
-            return False
-
-        filepath = get_filepath(configs.media_save_path, self.board, media_type, post)
-
-        if os.path.isfile(filepath):
-            return True
-
-        expected_size = post.get('fsize') if media_type == MediaType.full_media else None
-        expected_md5 = post.get('md5') if media_type == MediaType.full_media else None
-
-        is_success = download_file(
-            url,
-            filepath,
-            video_cooldown_sec=configs.video_cooldown_sec,
-            image_cooldown_sec=configs.image_cooldown_sec,
-            headers=configs.headers,
-            logger=configs.logger,
-            session=self.fetcher.session,
-            expected_size=expected_size,
-            expected_md5=expected_md5,
-            download_files_with_mismatched_md5=configs.download_files_with_mismatched_md5,
-        )
-
-        if not is_success:
-            return False
-
-        configs.logger.info(f'[{self.board}] Downloaded [{media_type.value}] {filepath}')
-
-        if media_type == MediaType.full_media:
-            media_hash = post.get('md5')
-            if media_hash:
-                media = get_asagi_value_media(post)
-                self.db.upsert_image(self.board, media_hash, media)
-
-            if configs.make_thumbnails:
-                thumb_path = get_filepath(configs.media_save_path, self.board, MediaType.thumbnail, post)
-                sleep(0.1, add_random=configs.add_random)
-                create_thumbnail(post, filepath, thumb_path, logger=configs.logger)

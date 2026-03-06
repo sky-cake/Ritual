@@ -17,14 +17,32 @@ ignore_http_cache = False # always ignore http cache and go through all threads 
 download_files_with_mismatched_md5 = False
 
 
+media_save_path = make_path('media')
+
+
+## Sutra ##
+# Saves media to filepaths like,
+# - full media: `<media_save_path>/img/sha256[:2]/sha256[2:4]/sha256[4:6]/sha256.ext/sha256<ext>`
+# - thumbnail: `<media_save_path>/thb/sha256[:2]/sha256[2:4]/sha256[4:6]/sha256.ext/sha256.jpg`
+# This is new to the image board archiving world, and it avoids downloading and saving duplicates files to our filesystem
+
+
+## Asagi ##
+# Saves media to filepaths like,
+# - full media: `<media_save_path>/<board>/image/tim[:4]/tim[4:6]/tim<ext>`
+# - thumbnail: `<media_save_path>/<board>/thumb/tim[:4]/tim[4:6]/tim<s.jpg>`
+# This is legacy and does not avoid duplicate files being downloaded and saved
 # Duplicate files can be replace with hardlinks or softlinks with the tool https://github.com/pkolaczk/fclones
 #   For ****example****,
 #     1. mkdir fcc
 #     2. fclones group ./media --cache ./fcc > dupes.txt
 #     3. fclones link --priority oldest < dupes.txt
 
+filepath_construct = 'asagi' # 'asagi' or 'sutra'
 
-media_save_path = make_path('media')
+
+# must be set if using filepath_construct = 'sutra'
+scanner_db_path: str = '' # make_path('scanner.db') # sqlite
 
 
 db_type = 'sqlite' # 'sqlite' or 'mysql'
