@@ -16,14 +16,14 @@ from utils import (
     make_path,
     read_json,
     sleep,
-    test_deps
+    assert_thumbnail_deps
 )
 
 
 class Init:
     def __init__(self):
         if configs.make_thumbnails:
-            test_deps(configs.logger)
+            assert_thumbnail_deps(configs.logger)
 
         boards_json_path = make_path('cache', 'boards.json')
         if os.path.isfile(boards_json_path):

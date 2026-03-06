@@ -293,7 +293,7 @@ class ChanThread(BasePost):
     last_replies: list[ChanPost] | None = None
 
 
-def test_deps(logger: logging.Logger):
+def assert_thumbnail_deps(logger: logging.Logger):
     ffmpeg_path = subprocess.run(['which', 'ffmpeg'], capture_output=True, text=True).stdout.strip()
     convert_path = subprocess.run(['which', 'convert'], capture_output=True, text=True).stdout.strip()
     logger.info(f'FFmpeg Path: {ffmpeg_path}')

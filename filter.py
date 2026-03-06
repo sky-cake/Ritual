@@ -37,7 +37,7 @@ class Filter:
         self.full_pids: set[int] = set()
         self.thumb_pids: set[int] = set()
 
-        self.banned_hashes: set[str] = set()
+        self.banned_media_hashes: set[str] = set()
 
     def set_tid_2_posts(self, tid_2_posts: dict[int, list[dict]]):
         self.tid_2_posts = tid_2_posts
@@ -144,7 +144,7 @@ class Filter:
         if media_type == MediaType.full_media:
             media_hash = post.get('md5')
             if media_hash:
-                if media_hash in self.banned_hashes:
+                if media_hash in self.banned_media_hashes:
                     return False
 
         filepath = get_filepath(configs.media_save_path, self.board, media_type, post)
@@ -168,7 +168,7 @@ class Filter:
                 if post_has_file(post) and post.get('md5'):
                     media_hashes.append(post['md5'])
 
-        self.banned_hashes = self.db.get_banned_hashes(self.board, media_hashes)
+        self.banned_media_hashes = self.db.get_banned_media_hashes(self.board, media_hashes)
 
         for tid, posts in self.tid_2_posts.items():
             should_dl_fm_thread = self.is_media_needed_simple(self.tid_2_thread[tid], dl_fm_thread)
