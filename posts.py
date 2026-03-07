@@ -222,9 +222,11 @@ class Posts:
         current_replies = thread_data.get('replies', 0)
         cached_replies = thread_stats.get('replies', 0)
 
-        if current_replies <= cached_replies:
+        # posts deleted by mods, update deleted attribute
+        if current_replies < cached_replies:
             return False
 
+        # more replies than what the /catalog endpoint provides
         reply_diff = current_replies - cached_replies
         if reply_diff > len(last_replies):
             return False

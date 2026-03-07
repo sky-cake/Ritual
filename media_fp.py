@@ -9,8 +9,6 @@ from scanner.db_scanner import ScannerDb
 from utils import (
     create_thumbnail,
     fetch_media_bytes,
-    get_asagi_value_media,
-    get_asagi_value_preview,
     get_media_url,
     sleep,
     get_md5_b64_hash,
@@ -30,20 +28,8 @@ def wrap_fetch_media_bytes(session: Session, url: str, ext: str) -> bytes | None
         headers=configs.headers,
         logger=configs.logger,
         session=session,
+        max_bytes=configs.fsize_upper_limit if (configs.enforce_fsize_upper_limit and configs.fsize_upper_limit) else None,
     )
-
-
-def ensure_dot_ext(ext: str) -> str:
-    if not ext:
-        return ''
-    return ext if ext.startswith('.') else f'.{ext}'
-
-
-def build_content_meta(content: bytes) -> dict:
-    return {
-        'computed_bsize': len(content),
-        'md5_b64_computed': get_md5_b64_hash(content)
-    }
 
 
 class MediaFP(ABC):
@@ -54,102 +40,80 @@ class MediaFP(ABC):
 
 
     @abstractmethod
-    def get_filefolder(self, post: dict, media_type: MediaType, board: str) -> str:
-        pass
-
-
-    @abstractmethod
-    def get_filename(self, post: dict, media_type: MediaType, board: str) -> str:
-        pass
-
-
-    @abstractmethod
     def download_full_media(self, url: str, post: dict, board: str):
         pass
 
 
-    def get_filepath(self, post: dict, media_type: MediaType, board: str) -> str:
-        return os.path.join(
-            self.get_filefolder(post, media_type, board),
-            self.get_filename(post, media_type, board)
-        )
+    @abstractmethod
+    def get_dirpath_and_filename(self, board: str, media_type: MediaType, post: dict) -> tuple[str, str]:
+        pass
 
 
-    def save(self, post: dict, board: str, media_type: MediaType, content: bytes) -> str:
-        filepath = self.get_filepath(post, media_type, board)
-        filefolder = os.path.dirname(filepath)
+    def save(self, post: dict, board: str, media_type: MediaType, content: bytes, dirpath: str=None, filename: str=None):
+        """
+        Overwrites any existing files.
+        """
+        if not (dirpath and filename):
+            dirpath, filename, self.get_dirpath_and_filename(board, media_type, post)
 
-        makedir_p(filefolder)
+        filepath = os.path.join(dirpath, filename)
+
+        makedir_p(dirpath)
 
         with open(filepath, 'wb') as f:
             f.write(content)
 
-        configs.logger.info(f'[{board}] Downloaded [{media_type.value}] {filepath}')
+        configs.logger.info(f'[{board}] Saved [{media_type.value}] {filepath}')
 
-        if media_type == MediaType.full_media and configs.make_thumbnails:
-            thumb_path = self.get_filepath(post, MediaType.thumbnail, board)
-
+        if configs.make_thumbnails and media_type == MediaType.full_media:
             # allow time for the fs to "digest" newly written file
             sleep(0.1)
-            create_thumbnail(
-                post,
-                filepath,
-                thumb_path,
-                logger=configs.logger,
-            )
-        return filepath
-
-
-    def get_max_size_for_media_type(self, media_type: MediaType) -> int | None:
-        if media_type == MediaType.thumbnail:
-            return getattr(configs, 'max_thumbnail_size_bytes', None)
-
-        return getattr(configs, 'max_full_media_size_bytes', None)
+            if os.path.isfile(filepath):
+                dirpath_thumb, filename_thumb = self.get_dirpath_and_filename(board, MediaType.thumbnail, post)
+                filepath_thumb = os.path.join(dirpath_thumb, filename_thumb)
+                create_thumbnail(
+                    post,
+                    filepath,
+                    filepath_thumb,
+                    logger=configs.logger,
+                )
 
 
     def should_write_to_disk(
         self,
         url: str,
-        meta: dict,
+        post: dict,
         media_type: MediaType,
-        api_bsize: int | None,
-        api_md5_b64: str | None,
+        content: bytes,
+        fsize_computed: str=None,
+        md5_computed: str=None,
     ) -> bool:
-        computed_bsize = meta['computed_bsize']
-        computed_md5 = meta['md5_b64_computed']
+        if fsize_computed is None:
+            fsize_computed = len(content)
 
-        max_size = self.get_max_size_for_media_type(media_type)
-        if max_size is not None and computed_bsize > max_size:
-            log_util(
-                configs.logger,
-                f'Skipping download because file exceeds configured limit {url=} computed_bsize={computed_bsize} limit={max_size}'
-            )
+        if not fsize_computed:
             return False
 
-        if api_bsize and computed_bsize > api_bsize:
-            log_util(
-                configs.logger,
-                f'File computed_bsize larger than API reported {url=} expected={api_bsize} got={computed_bsize}'
-            )
-
-        if api_md5_b64 and computed_md5 != api_md5_b64:
-            if configs.download_files_with_mismatched_md5:
-                log_util(
-                    configs.logger,
-                    f'Hashes differ but downloading anyway: {url} api={api_md5_b64} computed={computed_md5}'
-                )
-            else:
-                log_util(
-                    configs.logger,
-                    f'Hashes differ, skipping download: {url} api={api_md5_b64} computed={computed_md5}'
-                )
+        if configs.enforce_fsize_lte and (fsize_api := post.get('fsize')):
+            if fsize_computed > fsize_api:
+                log_util(configs.logger, f'Not saving: {url=} - {fsize_computed=} > {fsize_api=}')
                 return False
+
+        if media_type == MediaType.full_media:
+            if configs.enforce_md5_equality and (md5_api := post.get('md5')):
+
+                if not md5_computed:
+                    md5_computed = get_md5_b64_hash(content) # deferred md5 computation
+
+                if md5_computed != md5_api:
+                    log_util(configs.logger, f'Not saving: {url=} - {md5_api=} != {md5_computed=}')
+                    return False
 
         return True
 
 
     def download_thumbnail(self, url: str, post: dict, board: str):
-        filepath = self.get_filepath(post, MediaType.thumbnail, board)
+        filepath = self.get_dirpath_and_filename(board, MediaType.thumbnail, post)
 
         if os.path.isfile(filepath):
             return
@@ -158,15 +122,7 @@ class MediaFP(ABC):
         if not content:
             return
 
-        meta = build_content_meta(content)
-
-        if not self.should_write_to_disk(
-            url,
-            meta,
-            MediaType.thumbnail,
-            None,
-            None
-        ):
+        if not self.should_write_to_disk(url, post, MediaType.thumbnail, content):
             return
 
         self.save(post, board, MediaType.thumbnail, content)
@@ -190,6 +146,10 @@ class MediaFP(ABC):
             url = get_media_url(configs.url_full_media, board, post, MediaType.full_media)
             self.download_full_media(url, post, board)
 
+        # thumb_pids should be empty in if this is True, but we can "double mitigate" downloading thumbnails
+        if configs.make_thumbnails:
+            return
+
         for pid in thumb_pids:
             if pid not in pid_2_post:
                 configs.logger.info(
@@ -208,25 +168,29 @@ class AsagiMediaFP(MediaFP):
         self.ritual_db = ritual_db
 
 
-    def get_filename(self, post: dict, media_type: MediaType, board: str) -> str:
-        return get_asagi_value_media(post) if media_type == MediaType.full_media else get_asagi_value_preview(post)
+    def get_dirpath_and_filename(self, board: str, media_type: MediaType, post: dict) -> tuple[str, str]:
+        # assume already validated post attributes via ChanPost
+        if media_type == MediaType.full_media:
+            filename = f'{post['tim']}{post['ext']}'
+        elif media_type == MediaType.thumbnail:
+            filename = f'{post['tim']}s.jpg'
+        else:
+            raise ValueError(media_type)
 
-
-    def get_filefolder(self, post: dict, media_type: MediaType, board: str) -> str:
-        filename = self.get_filename(post, media_type, board)
-        tim = filename.rsplit('.', maxsplit=1)[0]
-
-        return os.path.join(
+        dirpath = os.path.join(
             self.media_save_path,
             board,
             media_type.value,
-            tim[:4],
-            tim[4:6],
+            filename[:4],
+            filename[4:6],
         )
+
+        return dirpath, filename
 
 
     def download_full_media(self, url: str, post: dict, board: str):
-        filepath = self.get_filepath(post, MediaType.full_media, board)
+        dirpath, filename = self.get_dirpath_and_filename(board, MediaType.full_media, post)
+        filepath = os.path.join(dirpath, filename)
 
         if os.path.isfile(filepath):
             return
@@ -235,15 +199,7 @@ class AsagiMediaFP(MediaFP):
         if not content:
             return
 
-        meta = build_content_meta(content)
-
-        if not self.should_write_to_disk(
-            url,
-            meta,
-            MediaType.full_media,
-            post.get('fsize'),
-            post.get('md5')
-        ):
+        if not self.should_write_to_disk(url, post, MediaType.full_media, content):
             return
 
         self.save(post, board, MediaType.full_media, content)
@@ -255,70 +211,84 @@ class SutraMediaFP(MediaFP):
         self.scanner_db = scanner_db
 
 
-    def get_filename(self, post: dict, media_type: MediaType, board: str) -> str:
+    def get_dirpath_and_filename(self, board: str, media_type: MediaType, post: dict) -> tuple[str, str]:
+        ext = post['ext']
         sha256 = post['sha256']
-        ext = ensure_dot_ext(post.get('ext', ''))
 
         if media_type == MediaType.full_media:
-            return f'{sha256}{ext}'
+            filename = f'{sha256}{ext}'
+        elif media_type == MediaType.thumbnail:
+            filename = f'{sha256}.jpg'
+        else:
+            raise ValueError(media_type)
 
-        return f'{sha256}.jpg'
-
-
-    def get_filefolder(self, post: dict, media_type: MediaType, board: str) -> str:
-        sha256 = post['sha256']
-
-        base = 'img' if media_type == MediaType.full_media else 'thb'
-
-        return os.path.join(
+        dirpath = os.path.join(
             self.media_save_path,
-            base,
-            sha256[:2],
-            sha256[2:4],
-            sha256[4:6],
+            media_type.value,
+            filename[:2],
+            filename[2:4],
+            filename[4:6],
         )
+
+        return dirpath, filename
 
 
     def download_full_media(self, url: str, post: dict, board: str):
+        # The sequence of steps for Sutra are a bit different from Asagi
+        # because we need to fetch the file content before creating the SHA256 hash / filename
+
         content = wrap_fetch_media_bytes(self.fetcher.session, url, post['ext'])
         if not content:
             return
 
-        meta = build_content_meta(content)
+        fsize_computed = len(content)
+        md5_computed = get_md5_b64_hash(content)
 
-        if not self.should_write_to_disk(
-            url,
-            meta,
-            MediaType.full_media,
-            post.get('fsize'),
-            post.get('md5')
-        ):
+        if not self.should_write_to_disk(url, post, MediaType.full_media, content, fsize_computed=fsize_computed, md5_computed=md5_computed):
             return
 
         sha256 = get_sha256_hash(content)
-        post['sha256'] = sha256
+        post['sha256'] = sha256 # tack on sha256 for filename usage
 
-        filepath = self.save(post, board, MediaType.full_media, content)
+        dirpath, filename = self.get_dirpath_and_filename(board, MediaType.full_media, post)
+        filepath = os.path.join(dirpath, filename)
 
-        # TODO no double computing
-        filename = os.path.basename(filepath)
-        filename_no_ext, ext = filename.rsplit('.', 1)
+        if os.path.isfile(filepath):
+            # TODO before we ever get here, we can mitigate downloading identical files using (md5, fsize, ext)
+            return
+
+        self.save(post, board, MediaType.full_media, content, dirpath=dirpath, filename=filename)
 
         # TODO ext and directory table inserts
         # TODO batch inserts
 
         self.scanner_db.run_query_tuple(
-            '''insert or ignore into hashtab 
-               (dir_id, filename_no_ext, ext_id, md5_b64_given, sha256, md5_b64_computed, bsize)
-               values (?, ?, ?, ?, ?, ?, ?)''',
+            '''
+            insert or ignore into hashtab 
+            (
+                dir_id,
+                filename_no_ext,
+                ext_id,
+                md5,
+                md5_computed,
+                fsize,
+                fsize_computed,
+                sha256,
+                is_banned,
+                is_saved,
+                is_error
+            )
+            values (?, ?, ?, ?, ?, ?, ?, ?, 0, 1, 0)
+            ;''',
             (
                 None,
-                filename_no_ext,
-                ext,
-                post['md5'],
                 sha256,
-                meta['md5_b64_computed'],
-                meta['computed_bsize']
+                ext_id,
+                post['md5'],
+                md5_computed,
+                post['fsize'],
+                fsize_computed,
+                sha256,
             ),
             commit=True
         )

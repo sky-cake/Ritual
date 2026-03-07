@@ -15,7 +15,7 @@ So now the hard links should be removed, and a purely de-duplicated root media f
 
 Pseudo code,
 
-- loop over batches of `hashtab.md5_b64_given` hashes in scanner.db
+- loop over batches of `hashtab.md5` hashes in scanner.db
     - look for `<board>.media_hash` matches in ritual.db across all boards
     - check if any Asagi convention `<board>.media_orig` filepaths exist
         - if none match, or no filepaths exist
@@ -24,7 +24,7 @@ Pseudo code,
             - if they are not, prompt the user
                 - print the paths of the differing files
                 - ask the user what to do,
-                    - default: (S)kip and log each media hash on a line like `<md5_b64_given>: [<filepath1>, <filepath2>, ...]`
+                    - default: (S)kip and log each media hash on a line like `<md5>: [<filepath1>, <filepath2>, ...]`
                     -          (P)ick an file to migrate, delete the others. Requires a second prompt "Choose filepath (1-N): ".
                     -          (R)andom file is chosen to migrate, the others are deleted.
                     -          (D)elete all files. Requires a second "Are you sure? (y/n)" prompt.
@@ -51,18 +51,14 @@ import base64
 import hashlib
 
 
-def get_sha256_and_md5_b64(path: str, buffer_limit: int) -> tuple[str, str]:
+def get_sha256_and_md5_b64(path: str) -> tuple[str, str]:
     sha = hashlib.sha256()
     md5 = hashlib.md5()
     with open(path, 'rb') as f:
-        while True:
-            b = f.read(buffer_limit)
-            if not b:
-                break
-            sha.update(b)
-            md5.update(b)
+        for chunk in iter(lambda: f.read(10_485_760), b''):
+            sha.update(chunk)
+            md5.update(chunk)
     return sha.hexdigest(), base64.b64encode(md5.digest()).decode()
-
 
 
 def ritual_paths(root_img: str, root_thb: str, sha256: str, ext: str) -> tuple[str, str]:
@@ -88,7 +84,7 @@ def unlink_if_exists(path: str):
 
 def fetch_md5_batches(db: sqlite3.Connection, batch_size: int):
     cur = db.cursor()
-    cur.execute('select distinct md5_b64_given from hashtab where md5_b64_given is not null;')
+    cur.execute('select distinct md5 from hashtab where md5 is not null;')
     rows = [r[0] for r in cur.fetchall()]
     for batch in batched(rows, batch_size):
         yield batch
@@ -101,12 +97,12 @@ def fetch_files_for_md5s(db: sqlite3.Connection, md5_batch: list[str]) -> tuple:
         d.dirpath,
         h.filename_no_ext,
         e.ext,
-        h.md5_b64_given,
+        h.md5,
         h.sha256
     from hashtab h
         join directory d using (dir_id)
         join extension e using (ext_id)
-    where h.md5_b64_given = ({placeholders})
+    where h.md5 = ({placeholders})
     ;
     '''
     return db.execute(sql, parameters=md5_batch).fetchall()
@@ -161,7 +157,7 @@ def main(
             #   d.dirpath,
             #   h.filename_no_ext,
             #   e.ext,
-            #   h.md5_b64_given,
+            #   h.md5,
             #   h.sha256,
             # ]
 

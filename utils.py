@@ -134,33 +134,11 @@ def get_asagi_value_preview(post: dict) -> str | None:
         return f"{post.get('tim')}s.jpg"
 
 
-digits = '0123456789'
-def get_filepath(media_save_path: str, board: str, media_type: MediaType, post: dict) -> str:
-    """
-    - Will create filepath directories if they don't exist.
-    - Calls to this function must ensure `post_has_file(post) == True`
-    """
-    filename = get_asagi_value_media(post) if media_type == MediaType.full_media else get_asagi_value_preview(post)
-
-    tim = filename.rsplit('.', maxsplit=1)[0]
-    assert len(tim) >= 6 and all(t in digits for t in tim[:6])
-    dir_path = make_path(media_save_path, board, media_type.value, filename[:4], filename[4:6])
-    os.makedirs(dir_path, mode=775, exist_ok=True)
-    os.chmod(dir_path, 0o775)
-    return os.path.join(dir_path, filename)
-
-
 def post_has_file(post: dict) -> bool:
     return post.get('tim') and post.get('ext')
 
 
 def create_thumbnail(post: dict, full_path: str, thumb_path: str, logger=None):
-    if not post_has_file(post):
-        return
-    
-    if not os.path.isfile(full_path):
-        return
-
     if is_post_media_file_video(post):
         create_thumbnail_from_video(full_path, thumb_path, logger=logger)
         return
@@ -434,20 +412,47 @@ def fetch_media_bytes(
     headers: dict | None=None,
     logger: Logger | None=None,
     session: Session | None=None,
+    max_bytes: int | None=None,
 ) -> bytes | None:
     """Handles sleeping after requests"""
-    resp = session.get(url, headers=headers) if session else requests_get(url, headers=headers)
 
-    if resp.status_code != 200:
-        log_util(logger, f'{url=} {resp.status_code=}')
-        return
+    resp = (session.get if session else requests_get)(url, headers=headers, stream=True)
 
-    if not resp.content:
-        return
+    try:
+        if resp.status_code != 200:
+            log_util(logger, f'{url=} {resp.status_code=}')
+            return
 
+        length = resp.headers.get('content-length')
+        if max_bytes is not None and length and int(length) > max_bytes:
+            log_util(logger, f'Download stopped: {url=} bytes={length} > {max_bytes=}')
+            sleep(2.0)
+            return
+
+        data = bytearray()
+
+        for chunk in resp.iter_content(65_536):
+            if not chunk:
+                continue
+
+            data.extend(chunk)
+
+            if max_bytes is not None and len(data) > max_bytes:
+                log_util(logger, f'Download stopped: {url=} bytes={len(data)} > {max_bytes=}')
+                return
+
+        if not data:
+            return
+
+    finally:
+        # always return connection to session pool
+        resp.close()
+
+    # We only sleep if we decide to download a file
     time_to_sleep = video_cooldown_sec if is_video_path(ext) else image_cooldown_sec if is_image_path(ext) else 2.0
     sleep(time_to_sleep)
-    return resp.content
+
+    return bytes(data)
 
 
 video_exts = ('webm', 'mp4', 'gif')
@@ -461,7 +466,8 @@ def is_image_path(path: str) -> bool:
 
 
 def makedir_p(dir: str):
-    os.makedirs(dir, mode=0o775, exist_ok=True)
+    if not os.path.isdir(dir):
+        os.makedirs(dir, mode=0o775, exist_ok=True)
 
 
 class MaxQueue:

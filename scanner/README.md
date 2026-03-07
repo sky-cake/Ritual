@@ -39,7 +39,7 @@ If you don't have an existing archive, you have less to worry about.
 ### Notes
 
 - Arbitrary filepath constructs will be supported by [Ayase Quart](https://github.com/sky-cake/ayase-quart) in the future to make use of this.
-- Cloudflare md5-b64 hashes differ from the 4chan API's given md5-b64 hashes differ quite a lot on some boards. That's why there are two md5 b64 columns, `md5_b64_given` and `md5_b64_computed`.
+- Cloudflare md5-b64 hashes differ from the 4chan API's given md5-b64 hashes differ quite a lot on some boards. That's why there are two md5 b64 columns, `md5` and `md5_computed`.
 - This handles file extensions that are mixed-case.
 - Ritual Scanner's filepath convention can scale to more disks by dividing across `.../[img|thb]/sha256[:2]` paths.
     - Hint: `location ~ ^/img/([0-8][0-9a-f])/ {root /mnt/disk_a;}`
