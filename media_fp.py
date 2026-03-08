@@ -47,7 +47,8 @@ class MediaFP(ABC):
 
     def shutdown(self, board: str):
         """`flush(board)` and close any non-RitualDb connections."""
-        self.flush(board)
+        if board:
+            self.flush(board)
 
 
     def flush_ritual_db_images(self, board: str):

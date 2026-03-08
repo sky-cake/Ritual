@@ -104,6 +104,7 @@ def main():
     fetcher = Fetcher(state)
 
     critical_error_count = 0
+    board = ''
     while True:
         try:
             for board in configs.boards:
