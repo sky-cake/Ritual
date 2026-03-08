@@ -17,10 +17,10 @@ Pseudo code,
 
 - loop over batches of `hashtab.md5` hashes in scanner.db
     - look for `<board>.media_hash` matches in ritual.db across all boards
-    - check if any Asagi convention `<board>.media_orig` filepaths exist
+    - check if any AsagiMediaFP `<board>.media_orig` filepaths exist
         - if none match, or no filepaths exist
             - continue
-        - if multiple filepaths for the media hash exist, assert all their sha256 hashes are equal.
+        - if multiple filepaths for the media hash exist, assert all their md5 hashes are equal.
             - if they are not, prompt the user
                 - print the paths of the differing files
                 - ask the user what to do,
@@ -29,16 +29,16 @@ Pseudo code,
                     -          (R)andom file is chosen to migrate, the others are deleted.
                     -          (D)elete all files. Requires a second "Are you sure? (y/n)" prompt.
             - else pick any file
-                - full media and thumbnail files get moves to the Ritual Scanner filepaths
-                - delete the remaining matching Asagi convention filepaths
+                - full media and thumbnail files get moves to the Sutra filepaths
+                - delete the remaining matching AsagiMediaFPs
         - if one filepath for the media hash exists,
-            - full media and thumbnail files get moves to the Ritual Scanner filepaths
+            - full media and thumbnail files get moves to the Sutra filepaths
 
-Ritual Scanner filepath convention:
-- full media: `.../img/sha256[:2]/sha256[2:4]/sha256[4:6]/sha256.ext/sha256<ext>`
-- thumbnail: `.../thb/sha256[:2]/sha256[2:4]/sha256[4:6]/sha256.ext/sha256.jpg`
+SutraMediaFP:
+- full media: `.../img/md5[:2]/md5[2:4]/md5[4:6]/md5.ext/md5<ext>`
+- thumbnail: `.../thb/md5[:2]/md5[2:4]/md5[4:6]/md5.ext/md5.jpg`
 
-Asagi filepath convention:
+AsagiMediaFP:
 - full media: `.../<board>/image/tim[:4]/tim[4:6]/tim<ext>`
 - thumbnail: `.../<board>/thumb/tim[:4]/tim[4:6]/tim<s.jpg>`
 """
@@ -51,21 +51,16 @@ import base64
 import hashlib
 
 
-def get_sha256_and_md5_b64(path: str) -> tuple[str, str]:
-    sha = hashlib.sha256()
+def get_md5_b64(path: str) -> str:
     md5 = hashlib.md5()
     with open(path, 'rb') as f:
         for chunk in iter(lambda: f.read(10_485_760), b''):
-            sha.update(chunk)
             md5.update(chunk)
-    return sha.hexdigest(), base64.b64encode(md5.digest()).decode()
+    return base64.b64encode(md5.digest()).decode()
 
 
-def ritual_paths(root_img: str, root_thb: str, sha256: str, ext: str) -> tuple[str, str]:
-    sub = os.path.join(sha256[:2], sha256[2:4], sha256[4:6], f'{sha256}.{ext}')
-    img = os.path.join(root_img, sub, f'{sha256}.{ext}')
-    thb = os.path.join(root_thb, sub, f'{sha256}.jpg')
-    return img, thb
+def sanitize_b64_for_path(b64: str) -> str:
+    return b64.replace('+', '-').replace('/', '_')
 
 
 def ensure_parent(path: str):
@@ -97,8 +92,7 @@ def fetch_files_for_md5s(db: sqlite3.Connection, md5_batch: list[str]) -> tuple:
         d.dirpath,
         h.filename_no_ext,
         e.ext,
-        h.md5,
-        h.sha256
+        h.md5
     from hashtab h
         join directory d using (dir_id)
         join extension e using (ext_id)
@@ -108,14 +102,14 @@ def fetch_files_for_md5s(db: sqlite3.Connection, md5_batch: list[str]) -> tuple:
     return db.execute(sql, parameters=md5_batch).fetchall()
 
 
-def assert_sha256_equal(rows: list[tuple]) -> str | None:
-    sha = None
-    for _, _, _, s in rows:
-        if sha is None:
-            sha = s
-        elif sha != s:
+def assert_md5_computed_equal(rows: list[tuple]) -> str | None:
+    md5 = None
+    for _, _, _, m in rows:
+        if md5 is None:
+            md5 = m
+        elif md5 != m:
             return None
-    return sha
+    return md5
 
 
 def prompt_conflict(md5: str, rows: list[tuple]) -> tuple[str, int | None]:
@@ -158,7 +152,6 @@ def main(
             #   h.filename_no_ext,
             #   e.ext,
             #   h.md5,
-            #   h.sha256,
             # ]
 
     db.close()

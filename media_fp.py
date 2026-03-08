@@ -13,6 +13,7 @@ from utils import (
     get_media_url,
     sleep,
     get_md5_b64_hash,
+    get_fs_safe_b64,
     log_util,
     makedir_p,
 )
@@ -83,7 +84,7 @@ class MediaFP(ABC):
         Overwrites any existing files.
         """
         if not (dirpath and filename):
-            dirpath, filename, self.get_dirpath_and_filename(board, media_type, post)
+            dirpath, filename = self.get_dirpath_and_filename(board, media_type, post)
 
         filepath = os.path.join(dirpath, filename)
 
@@ -114,8 +115,8 @@ class MediaFP(ABC):
         post: dict,
         media_type: MediaType,
         content: bytes,
-        fsize_computed: str=None,
-        md5_computed: str=None,
+        fsize_computed: int | None=None,
+        md5_computed: str | None=None,
     ) -> bool:
         if fsize_computed is None:
             fsize_computed = len(content)
@@ -129,7 +130,7 @@ class MediaFP(ABC):
                 return False
 
         if media_type == MediaType.full_media:
-            if configs.enforce_md5_equality and (md5_api := post.get('md5')):
+            if configs.enforce_md5_equality and (md5_api := post['md5']):
 
                 if not md5_computed:
                     md5_computed = get_md5_b64_hash(content) # deferred md5 computation
@@ -142,7 +143,8 @@ class MediaFP(ABC):
 
 
     def download_thumbnail(self, url: str, post: dict, board: str):
-        filepath = self.get_dirpath_and_filename(board, MediaType.thumbnail, post)
+        dirpath, filename = self.get_dirpath_and_filename(board, MediaType.thumbnail, post)
+        filepath = os.path.join(dirpath, filename)
 
         if os.path.isfile(filepath):
             return
@@ -195,9 +197,9 @@ class AsagiMediaFP(MediaFP):
     def get_dirpath_and_filename(self, board: str, media_type: MediaType, post: dict) -> tuple[str, str]:
         # assume already validated post attributes via ChanPost
         if media_type == MediaType.full_media:
-            filename = f'{post['tim']}{post['ext']}'
+            filename = f'{post["tim"]}{post["ext"]}'
         elif media_type == MediaType.thumbnail:
-            filename = f'{post['tim']}s.jpg'
+            filename = f'{post["tim"]}s.jpg'
         else:
             raise ValueError(media_type)
 
@@ -228,7 +230,7 @@ class AsagiMediaFP(MediaFP):
 
         self.save(post, board, MediaType.full_media, content)
 
-        if post.get('md5'):
+        if post['md5']:
             media = f"{post.get('tim')}{post.get('ext')}"
             self.ritual_queue.append((post['md5'], media))
 
@@ -283,15 +285,15 @@ class SutraMediaFP(MediaFP):
 
 
     def shutdown(self, board: str):
-        super().flush(board)
+        super().shutdown(board)
         self.scanner_db.save_and_close()
 
 
     def get_dirpath_and_filename(self, board: str, media_type: MediaType, post: dict) -> tuple[str, str]:
         if media_type == MediaType.full_media:
-            filename = f'{post['filename_md5']}{post['ext']}'
+            filename = f'{get_fs_safe_b64(post['filename_md5'])}{post["ext"]}'
         elif media_type == MediaType.thumbnail:
-            filename = f'{post['filename_md5']}.jpg'
+            filename = f'{get_fs_safe_b64(post['filename_md5'])}.jpg'
         else:
             raise ValueError(media_type)
 
@@ -341,7 +343,7 @@ class SutraMediaFP(MediaFP):
 
         self.scanner_queue.append((
             dirpath,
-            md5_computed,
+            get_fs_safe_b64(md5_computed),
             post['ext'],
             post['md5'],
             md5_computed,
@@ -349,10 +351,9 @@ class SutraMediaFP(MediaFP):
             fsize_computed,
             0,
             1,
-            0,
         ))
 
-        if post.get('md5'):
+        if post['md5']:
             media = f"{post.get('tim')}{post.get('ext')}"
             self.ritual_queue.append((post['md5'], media))
 

@@ -86,13 +86,13 @@ def save_on_error(state: State, db: RitualDb, media_fp: MediaFP, board: str):
 
 
 def get_media_fp(fetcher: Fetcher, db: RitualDb) -> MediaFP:
-    if configs.filepath_construct == 'sutra':
+    if configs.media_fp == 'sutra':
         return SutraMediaFP(fetcher, configs.media_save_path, db)
 
-    if configs.filepath_construct == 'asagi':
+    if configs.media_fp == 'asagi':
         return AsagiMediaFP(fetcher, configs.media_save_path, db)
 
-    raise ValueError(configs.filepath_construct)
+    raise ValueError(configs.media_fp)
 
 
 def main():

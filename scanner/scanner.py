@@ -4,7 +4,7 @@ from itertools import batched
 
 from configs import Config
 from db_scanner import ScannerDb
-from file_meta_extract import get_sha256_and_md5_b64
+from file_meta_extract import get_md5_b64
 from progress import Counter
 from utils import iter_media_files
 
@@ -31,7 +31,7 @@ def gather_metadata(db: ScannerDb, batch_size: int):
     """
     counter = Counter('gather_metadata', batch_size)
 
-    missing_meta_file_count = int(db.run_query_tuple('select count(*) from hashtab where sha256 is null and is_saved is null;')[0][0])
+    missing_meta_file_count = int(db.run_query_tuple('select count(*) from hashtab where md5_computed is null and is_saved is null;')[0][0])
     if missing_meta_file_count == 0:
         print('Nothing to do - all files have had their metadata gathered already.')
         return
@@ -47,7 +47,7 @@ def gather_metadata(db: ScannerDb, batch_size: int):
         join directory d using (dir_id)
         join extension e using (ext_id)
     where
-        h.sha256 is null and is_saved is null
+        h.md5_computed is null and is_saved is null
     limit {int(batch_size)};
     '''
 
@@ -60,10 +60,9 @@ def gather_metadata(db: ScannerDb, batch_size: int):
         ext,
         md5_computed,
         fsize_computed,
-        sha256,
         is_saved
     )
-    values (?,?,?,?,?,?,?);
+    values (?,?,?,?,?,?);
     '''
 
     while True:
@@ -79,11 +78,10 @@ def gather_metadata(db: ScannerDb, batch_size: int):
             if not os.path.isfile(fullpath):
                 is_saved = 0
                 md5_computed = None
-                sha256 = None
                 fsize_computed = None
             else:
                 is_saved = 1
-                sha256, md5_computed = get_sha256_and_md5_b64(fullpath)
+                md5_computed = get_md5_b64(fullpath)
                 fsize_computed = os.path.getsize(fullpath)
 
             params.append((
@@ -92,7 +90,6 @@ def gather_metadata(db: ScannerDb, batch_size: int):
                 row[2],
                 md5_computed,
                 fsize_computed,
-                sha256,
                 is_saved,
             ))
 

@@ -34,8 +34,9 @@ media_save_path = make_path('media')
 
 ## Sutra ##
 # Saves media to filepaths like,
-# - full media: `<media_save_path>/img/sha256[:2]/sha256[2:4]/sha256[4:6]/sha256.ext/sha256<ext>`
-# - thumbnail: `<media_save_path>/thb/sha256[:2]/sha256[2:4]/sha256[4:6]/sha256.ext/sha256.jpg`
+# - full media: `<media_save_path>/img/md5[:2]/md5[2:4]/md5[4:6]/md5.ext/md5<ext>`
+# - thumbnail: `<media_save_path>/thb/md5[:2]/md5[2:4]/md5[4:6]/md5.ext/md5.jpg`
+# Where md5 are computed md5 values (not API-reported), with `+` and `/` replaced by `-` and `_` for filesystem safety.
 # This is new to the image board archiving world, and it avoids downloading and saving duplicates files to our filesystem
 
 
@@ -50,10 +51,10 @@ media_save_path = make_path('media')
 #     2. fclones group ./media --cache ./fcc > dupes.txt
 #     3. fclones link --priority oldest < dupes.txt
 
-filepath_construct = 'asagi' # 'asagi' or 'sutra'
+media_fp = 'asagi' # 'asagi' or 'sutra'
 
 
-# must be set if using filepath_construct = 'sutra'
+# must be set if using media_fp = 'sutra'
 scanner_db_path: str = '' # make_path('scanner.db') # sqlite
 
 

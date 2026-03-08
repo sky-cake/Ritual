@@ -393,8 +393,8 @@ def get_md5_b64_hash(content: bytes) -> str:
     return base64.b64encode(hashlib.md5(content).digest()).decode('ascii')
 
 
-def get_sha256_hash(content: bytes) -> str:
-    return hashlib.sha256(content).hexdigest()
+def get_fs_safe_b64(b64: str) -> str:
+    return b64.replace('+', '-').replace('/', '_')
 
 
 def download_to_memory(url: str, session: Session, headers: dict | None) -> bytes | None:
