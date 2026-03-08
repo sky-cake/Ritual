@@ -15,7 +15,7 @@ So now the hard links should be removed, and a purely de-duplicated root media f
 
 Pseudo code,
 
-- loop over batches of `hashtab.md5` hashes in scanner.db
+- loop over batches of `hashtab.md5_computed` hashes in scanner.db
     - look for `<board>.media_hash` matches in ritual.db across all boards
     - check if any AsagiMediaFP `<board>.media_orig` filepaths exist
         - if none match, or no filepaths exist
@@ -28,27 +28,27 @@ Pseudo code,
                     -          (P)ick an file to migrate, delete the others. Requires a second prompt "Choose filepath (1-N): ".
                     -          (R)andom file is chosen to migrate, the others are deleted.
                     -          (D)elete all files. Requires a second "Are you sure? (y/n)" prompt.
-            - else pick any file
+            - else, pick any file
                 - full media and thumbnail files get moves to the Sutra filepaths
                 - delete the remaining matching AsagiMediaFPs
         - if one filepath for the media hash exists,
             - full media and thumbnail files get moves to the Sutra filepaths
-
-SutraMediaFP:
-- full media: `.../img/md5[:2]/md5[2:4]/md5[4:6]/md5.ext/md5<ext>`
-- thumbnail: `.../thb/md5[:2]/md5[2:4]/md5[4:6]/md5.ext/md5.jpg`
-
-AsagiMediaFP:
-- full media: `.../<board>/image/tim[:4]/tim[4:6]/tim<ext>`
-- thumbnail: `.../<board>/thumb/tim[:4]/tim[4:6]/tim<s.jpg>`
 """
 
+
 import os
-import shutil
 import sqlite3
-from itertools import batched
-import base64
 import hashlib
+import random
+import shutil
+import base64
+
+
+_b64_fs_table = str.maketrans({'+': '-', '/': '_'})
+
+
+def get_fs_safe_b64(b64: str) -> str:
+    return b64.translate(_b64_fs_table)
 
 
 def get_md5_b64(path: str) -> str:
@@ -59,117 +59,177 @@ def get_md5_b64(path: str) -> str:
     return base64.b64encode(md5.digest()).decode()
 
 
-_b64_fs_trans = str.maketrans({
-    '+': '-',
-    '/': '_',
-})
+def get_sutra_paths(root: str, md5: str, ext: str):
+    safe = get_fs_safe_b64(md5)
+    dirpath = os.path.join(root, 'image', safe[:4], safe[4:6], safe[6:8])
+    filepath = os.path.join(dirpath, f'{safe}{ext}')
+    return dirpath, filepath
 
 
-def get_fs_safe_b64(b64: str) -> str:
-    return b64.translate(_b64_fs_trans)
+def get_sutra_thumb(root: str, md5: str):
+    safe = get_fs_safe_b64(md5)
+    dirpath = os.path.join(root, 'thumb', safe[:4], safe[4:6], safe[6:8])
+    filepath = os.path.join(dirpath, f'{safe}.jpg')
+    return dirpath, filepath
 
 
-def ensure_parent(path: str):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+def get_asagi_full(root: str, board: str, media: str):
+    tim = media[:-len(os.path.splitext(media)[1])]
+    return os.path.join(root, board, 'image', tim[:4], tim[4:6], media)
 
 
-def copy_file(src: str, dst: str):
-    ensure_parent(dst)
-    shutil.copy2(src, dst, follow_symlinks=False)
+def get_asagi_thumb(root: str, board: str, media: str):
+    tim = media[:-len(os.path.splitext(media)[1])]
+    return os.path.join(root, board, 'thumb', tim[:4], tim[4:6], f'{tim}s.jpg')
 
 
-def unlink_if_exists(path: str):
-    if os.path.exists(path):
-        os.unlink(path)
+def query_hashes(cur, batch: int):
+    rows = cur.fetchmany(batch)
+    while rows:
+        yield [r[0] for r in rows]
+        rows = cur.fetchmany(batch)
 
 
-def fetch_md5_batches(db: sqlite3.Connection, batch_size: int):
-    cur = db.cursor()
-    cur.execute('select distinct md5 from hashtab where md5 is not null;')
-    rows = [r[0] for r in cur.fetchall()]
-    for batch in batched(rows, batch_size):
-        yield batch
+def get_boards(cur):
+    cur.execute("select name from sqlite_master where type='table'")
+    tables = [r[0] for r in cur.fetchall() if r[0].endswith('_images')]
+    return [t[:-7] for t in tables]
 
 
-def fetch_files_for_md5s(db: sqlite3.Connection, md5_batch: list[str]) -> tuple:
-    placeholders = ','.join(['?'] * len(md5_batch))
-    sql = f'''
-    select
-        d.dirpath,
-        h.filename_no_ext,
-        e.ext,
-        h.md5
-    from hashtab h
-        join directory d using (dir_id)
-        join extension e using (ext_id)
-    where h.md5 = ({placeholders})
-    ;
-    '''
-    return db.execute(sql, parameters=md5_batch).fetchall()
+def get_media_paths(cur, boards, md5, root):
+    paths = []
+    for board in boards:
+        cur.execute(f'select media from `{board}_images` where media_hash=?', (md5,))
+        for (media,) in cur.fetchall():
+            p = get_asagi_full(root, board, media)
+            if os.path.isfile(p):
+                paths.append((board, media, p))
+    return paths
 
 
-def assert_md5_computed_equal(rows: list[tuple]) -> str | None:
-    md5 = None
-    for _, _, _, m in rows:
-        if md5 is None:
-            md5 = m
-        elif md5 != m:
-            return None
-    return md5
+def verify_same_md5(paths):
+    hashes = {get_md5_b64(p) for p in paths}
+    return len(hashes) == 1
 
 
-def prompt_conflict(md5: str, rows: list[tuple]) -> tuple[str, int | None]:
-    print(f'conflict for md5 {md5}')
-    for i, r in enumerate(rows, 1):
-        print(f'{i}. {os.path.join(r[0], r[1] + "." + r[2])}')
-    print('(S)kip  (P)ick  (R)andom  (D)elete all')
-    choice = input('> ').strip().lower()
+def prompt_user(md5, paths):
+    print('\nconflict for', md5)
+    for i, p in enumerate(paths, 1):
+        print(f'{i}: {p}')
+    print('(S)kip\n(P)ick\n(R)andom\n(D)elete all')
+    choice = input('choice: ').lower().strip()
     if choice == 'p':
-        idx = int(input('Choose filepath (1-N): ')) - 1
-        return 'pick', idx
+        idx = int(input(f'Choose filepath (1-{len(paths)}): '))
+        return paths[idx - 1], 'pick'
     if choice == 'r':
-        return 'random', None
-    if choice == 'd':
-        confirm = input('Are you sure? (y/n): ').strip().lower()
-        if confirm == 'y':
-            return 'delete', None
-        return 'skip', None
-    return 'skip', None
+        return random.choice(paths), 'pick'
+    if choice == 'd' and input('Are you sure? (y/n) ').lower() == 'y':
+        return None, 'delete'
+    return None, 'skip'
 
 
-def make_path(*filepaths):
-    return os.path.join(os.path.abspath(os.path.dirname(__file__)), *filepaths)
+def remove_other_links(src_path, keep_path):
+    # remove all hard links or symlinks to a source file except the chosen one
+
+    if not os.path.exists(src_path):
+        return
+
+    # Get inode and device info for detecting hard links
+    stat_info = os.stat(src_path)
+    inode = stat_info.st_ino
+    device = stat_info.st_dev
+    # list all files in the source directory tree to find links with same inode
+    for root_dir, _, files in os.walk(os.path.dirname(src_path)):
+        for f in files:
+            fpath = os.path.join(root_dir, f)
+            try:
+                if fpath == keep_path:
+                    continue
+                # remove symlinks
+                if os.path.islink(fpath):
+                    os.unlink(fpath)
+                    continue
+                # remove hard links with same inode on same device
+                st = os.stat(fpath)
+                if st.st_ino == inode and st.st_dev == device:
+                    os.unlink(fpath)
+            except FileNotFoundError:
+                continue
 
 
-def main(
-    scanner_db_path: str,
-    ritual_img_root: str,
-    ritual_thb_root: str,
-    batch_size: int,
-    dry_run: bool,
-):
-    db = sqlite3.connect(scanner_db_path, autocommit=True)
+def move_to_sutra(asagi_root: str, sutra_root: str, md5: str, board: str, media: str):
+    full_src = get_asagi_full(asagi_root, board, media)
+    thumb_src = get_asagi_thumb(asagi_root, board, media)
+    ext = os.path.splitext(media)[1]
 
-    with open(make_path('migration.log'), 'w') as log:
-        for md5_batch in fetch_md5_batches(db, batch_size):
-            rows: tuple = fetch_files_for_md5s(db, md5_batch)
-            # rows = [
-            #   d.dirpath,
-            #   h.filename_no_ext,
-            #   e.ext,
-            #   h.md5,
-            # ]
+    dir_full, file_full = get_sutra_paths(sutra_root, md5, ext)
+    dir_thumb, file_thumb = get_sutra_thumb(sutra_root, md5)
 
-    db.close()
+    os.makedirs(dir_full, exist_ok=True)
+    os.makedirs(dir_thumb, exist_ok=True)
+
+    # remove other hard links or symlinks before moving full media
+    remove_other_links(full_src, full_src)
+    if os.path.isfile(full_src):
+        shutil.move(full_src, file_full)  # Move main file to Sutra location
+
+    # remove other hard links or symlinks before moving thumbnail
+    remove_other_links(thumb_src, thumb_src)
+    if os.path.isfile(thumb_src):
+        shutil.move(thumb_src, file_thumb) # move thumbnail to Sutra location
 
 
-# Work in progress
+def migrate(scanner_db_path, ritual_db_path, asagi_root, sutra_root, log_file_path, batch=500):
+    scanner_con = sqlite3.connect(scanner_db_path)
+    scanner_cur = scanner_con.cursor()
+    scanner_cur.execute('select md5_computed from hashtab')
 
-# if __name__ == '__main__':
-#     main(
-#         scanner_db_path='/path/to/scanner/scanner.db',
-#         ritual_img_root='/path/to/media/img',
-#         ritual_thb_root='/path/to/media/thb',
-#         batch_size=500,
-#         dry_run=True,
-#     )
+    ritual_con = sqlite3.connect(ritual_db_path)
+    ritual_cur = ritual_con.cursor()
+    boards = get_boards(ritual_cur)
+
+    log_file = open(log_file_path, 'a')
+
+    for hashes in query_hashes(scanner_cur, batch):
+        for md5 in hashes:
+            matches = get_media_paths(ritual_cur, boards, md5, asagi_root)
+            if not matches:
+                continue
+
+            files = [p for _, _, p in matches]
+            if len(files) > 1:
+                if not verify_same_md5(files):
+                    chosen, action = prompt_user(md5, files)
+                    if action == 'skip':
+                        log_file.write(f'{md5}: {[str(p) for p in files]}\n')
+                        continue
+                    if action == 'delete':
+                        for p in files:
+                            os.remove(p)
+                        continue
+                else:
+                    chosen = files[0]
+            else:
+                chosen = files[0]
+
+            board, media, _ = next(x for x in matches if x[2] == chosen)
+            move_to_sutra(asagi_root, sutra_root, md5, board, media)
+
+            for _, _, p in matches:
+                if p != chosen and os.path.isfile(p):
+                    os.remove(p)
+
+    log_file.close()
+    scanner_con.close()
+    ritual_con.close()
+
+
+if __name__ == '__main__':
+    migrate(
+        scanner_db_path='/path/to/scanner/scanner.db',
+        ritual_db_path='/path/to/ritual/ritual.db',
+        asagi_root='/path/to/media/asagi',
+        sutra_root='/path/to/media/sutra',
+        log_file_path='/path/to/migration.log',
+        batch=500
+    )
