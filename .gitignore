@@ -1,5 +1,5 @@
 configs.py
-media*
+media/*
 __pycache__/
 *.log
 *.db
@@ -14,8 +14,10 @@ cache/
 launch.json
 .pytest_cache/
 .venv/
+*.db
 *.db-shm
 *.db-wal
 *.log
 asagi-tables/
 asagi.toml
+scanner.toml

@@ -139,7 +139,7 @@ class RitualDb:
         return {row[0] for row in rows} if rows else set()
 
 
-    def get_banned_hashes(self, board: str, media_hashes: list[str]) -> set[str]:
+    def get_banned_media_hashes(self, board: str, media_hashes: list[str]) -> set[str]:
         if not media_hashes:
             return set()
 
@@ -154,7 +154,7 @@ class RitualDb:
         if not rows:
             return set()
 
-        return set([row[0] for row in rows])
+        return set([row[0] for row in rows if row[0]])
 
 
     def upsert_image(self, board: str, media_hash: str, media: str | None):

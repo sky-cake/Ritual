@@ -12,19 +12,49 @@ ignore_thread_cache = True # on restarts, ignore thread cache and go through all
 ignore_http_cache = False # always ignore http cache and go through all threads (used for testing)
 
 
-# If the md5 from the API, and the md5 from the downloaded file do not match,
-# download anyway (True) or do not download (False)
-download_files_with_mismatched_md5 = False
+## "enforce" results in not saving a file to disk
+
+# Do you want to enforce (downloaded file md5) == (API reported md5) ?
+# It is common for these to differ, perhaps due to Cloudflare media optimizating
+enforce_md5_equality = False
+
+# Do you want to enforce (downloaded file size) <= (API reported file size) ?
+enforce_fsize_lte = False
+
+# 4chan's max file size across all boards is 10_485_760 (/f/ - flash)
+# Applies to all media downloads (full and thumbs)
+fsize_upper_limit = 10_485_760
+
+# Do you want to enforce (downloaded file size) <= (fsize_upper_limit) ?
+enforce_fsize_upper_limit = False
 
 
+media_save_path = make_path('media')
+
+
+## Sutra ##
+# Saves media to filepaths like,
+# - full media: `<media_save_path>/img/sha256[:2]/sha256[2:4]/sha256[4:6]/sha256.ext/sha256<ext>`
+# - thumbnail: `<media_save_path>/thb/sha256[:2]/sha256[2:4]/sha256[4:6]/sha256.ext/sha256.jpg`
+# This is new to the image board archiving world, and it avoids downloading and saving duplicates files to our filesystem
+
+
+## Asagi ##
+# Saves media to filepaths like,
+# - full media: `<media_save_path>/<board>/image/tim[:4]/tim[4:6]/tim<ext>`
+# - thumbnail: `<media_save_path>/<board>/thumb/tim[:4]/tim[4:6]/tim<s.jpg>`
+# This is legacy and does not avoid duplicate files being downloaded and saved
 # Duplicate files can be replace with hardlinks or softlinks with the tool https://github.com/pkolaczk/fclones
 #   For ****example****,
 #     1. mkdir fcc
 #     2. fclones group ./media --cache ./fcc > dupes.txt
 #     3. fclones link --priority oldest < dupes.txt
 
+filepath_construct = 'asagi' # 'asagi' or 'sutra'
 
-media_save_path = make_path('media')
+
+# must be set if using filepath_construct = 'sutra'
+scanner_db_path: str = '' # make_path('scanner.db') # sqlite
 
 
 db_type = 'sqlite' # 'sqlite' or 'mysql'
@@ -81,7 +111,9 @@ MB_5 = 5 * 1024 * 1024
 logger = setup_logger(logger_name, log_file=log_file, stdout=True, file_rotate_size=MB_5, max_files=3)
 
 
-make_thumbnails = False # don't download thumbnails, create them when downloading full media
+# if True, Ritual will not download thumbnails
+# and thumbnails will only be created for full media that is downloaded
+make_thumbnails = False
 
 # ARCHIVE RULES - What to archive.
 
