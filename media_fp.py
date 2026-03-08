@@ -6,6 +6,7 @@ import configs
 from enums import MediaType
 from fetcher import Fetcher
 from scanner.db_scanner import ScannerDb
+from db.ritual import RitualDb
 from utils import (
     create_thumbnail,
     fetch_media_bytes,
@@ -32,17 +33,39 @@ def wrap_fetch_media_bytes(session: Session, url: str, ext: str) -> bytes | None
 
 
 class MediaFP(ABC):
-    def __init__(self, fetcher: Fetcher, media_save_path: str):
+    def __init__(self, fetcher: Fetcher, media_save_path: str, ritual_db: RitualDb):
         self.fetcher = fetcher
         self.media_save_path = media_save_path
+        self.ritual_db = ritual_db
+        self.ritual_queue = []
 
 
-    def flush(self):
-        pass
+    def flush(self, board: str):
+        if board:
+            self.flush_ritual_db_images(board)
 
 
-    def clean_up(self):
-        pass
+    def shutdown(self, board: str):
+        """`flush(board)` and close any non-RitualDb connections."""
+        self.flush(board)
+
+
+    def flush_ritual_db_images(self, board: str):
+        """
+        Writes to <board>_images table.
+        """
+        if not self.ritual_queue:
+            return
+
+        sql = f'''
+        insert into `{board}_images`
+            (media_hash, media, total, banned)
+        values (?, ?, 1, 0) on conflict(media_hash) do update set
+            total = total + 1,
+            media = coalesce(media, excluded.media)
+        ;'''
+        self.ritual_db.db.run_query_many(sql, self.ritual_queue, commit=True)
+        self.ritual_queue = []
 
 
     @abstractmethod
@@ -169,8 +192,8 @@ class MediaFP(ABC):
 
 
 class AsagiMediaFP(MediaFP):
-    def __init__(self, fetcher: Fetcher, media_save_path: str):
-        super().__init__(fetcher, media_save_path)
+    def __init__(self, fetcher: Fetcher, media_save_path: str, ritual_db: RitualDb):
+        super().__init__(fetcher, media_save_path, ritual_db)
 
 
     def get_dirpath_and_filename(self, board: str, media_type: MediaType, post: dict) -> tuple[str, str]:
@@ -209,21 +232,30 @@ class AsagiMediaFP(MediaFP):
 
         self.save(post, board, MediaType.full_media, content)
 
+        if post.get('md5'):
+            media = f"{post.get('tim')}{post.get('ext')}"
+            self.ritual_queue.append((post['md5'], media))
+
 
 class SutraMediaFP(MediaFP):
-    def __init__(self, fetcher: Fetcher, media_save_path: str):
-        super().__init__(fetcher, media_save_path, None)
+    def __init__(self, fetcher: Fetcher, media_save_path: str, ritual_db: RitualDb):
+        super().__init__(fetcher, media_save_path, ritual_db)
 
         self.scanner_db = ScannerDb(configs.scanner_db_path)
         self.scanner_db.init_db()
 
-        self.scanner_insert_queue = []
+        self.scanner_queue = []
 
 
-    def clean_up(self):
-        self.flush()
+    def flush(self, board: str):
+        super().flush(board)
+        self.flush_scanner()
+
+
+    def shutdown(self, board: str):
+        super().flush(board)
         self.scanner_db.save_and_close()
-        
+
 
     def get_dirpath_and_filename(self, board: str, media_type: MediaType, post: dict) -> tuple[str, str]:
         ext = post['ext']
@@ -273,7 +305,7 @@ class SutraMediaFP(MediaFP):
 
         self.save(post, board, MediaType.full_media, content, dirpath=dirpath, filename=filename)
 
-        self.scanner_insert_queue.append((
+        self.scanner_queue.append((
             dirpath,
             sha256,
             post['ext'],
@@ -287,9 +319,13 @@ class SutraMediaFP(MediaFP):
             0,
         ))
 
+        if post.get('md5'):
+            media = f"{post.get('tim')}{post.get('ext')}"
+            self.ritual_queue.append((post['md5'], media))
 
-    def flush(self):
-        if not self.scanner_insert_queue:
+
+    def flush_scanner(self):
+        if not self.scanner_queue:
             return
 
         sql_string = '''
@@ -298,5 +334,5 @@ class SutraMediaFP(MediaFP):
         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ;'''
 
-        self.scanner_db.run_query_many(sql_string, self.scanner_insert_queue, commit=True)
-        self.scanner_insert_queue = []
+        self.scanner_db.run_query_many(sql_string, self.scanner_queue, commit=True)
+        self.scanner_queue = []

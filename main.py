@@ -10,7 +10,6 @@ from filter import Filter
 from loop import Loop
 from media_fp import AsagiMediaFP, SutraMediaFP, MediaFP
 from posts import Posts
-from scanner.db_scanner import ScannerDb
 from state import State
 from utils import (
     fetch_and_save_boards_json,
@@ -67,34 +66,28 @@ def process_board(board: str, db: RitualDb, fetcher: Fetcher, loop: Loop, state:
     filter.get_pids_for_download()
 
     media_fp.download_media_for_ids(board, posts.pid_2_post, filter.full_pids, filter.thumb_pids)
-    media_fp.flush()
-
-    # TODO insert records into <board>_images table in a batch
-    # media_hash = post['md5']
-    # if media_hash:
-    #     media = get_asagi_value_media(post)
-    #     self.ritual_db.upsert_image(board, media_hash, media)
+    media_fp.flush(board)
 
     loop.set_board_duration_minutes(board)
 
 
-def save_on_error(state: State, db: RitualDb, media_fp: MediaFP):
-    configs.logger.info('Saving state...')
+def save_on_error(state: State, db: RitualDb, media_fp: MediaFP, board: str):
+    configs.logger.info('Saving State...')
     state.save()
     configs.logger.info('  Done')
 
-    configs.logger.info('Saving ritual database...')
-    db.save_and_close()
+    configs.logger.info('Shutting down MediaFP...')
+    media_fp.shutdown(board)
     configs.logger.info('  Done')
 
-    configs.logger.info('Cleaning up media fp...')
-    media_fp.clean_up()
+    configs.logger.info('Shutting down RitualDb...')
+    db.save_and_close()
     configs.logger.info('  Done')
 
 
 def get_media_fp(fetcher: Fetcher, db: RitualDb) -> MediaFP:
     if configs.filepath_construct == 'sutra':
-        return SutraMediaFP(fetcher, configs.media_save_path)
+        return SutraMediaFP(fetcher, configs.media_save_path, db)
 
     if configs.filepath_construct == 'asagi':
         return AsagiMediaFP(fetcher, configs.media_save_path, db)
@@ -125,13 +118,13 @@ def main():
 
         except KeyboardInterrupt:
             configs.logger.info('Received interrupt signal')
-            save_on_error(state, db, media_fp)
+            save_on_error(state, db, media_fp, board)
             break
 
         except Exception as e:
             configs.logger.error(f'Critical error in main loop: {e}')
             configs.logger.error(traceback.format_exc())
-            save_on_error(state, db, media_fp)
+            save_on_error(state, db, media_fp, board)
             critical_error_count += 1
             n_critical_errors = 5
             if critical_error_count >= n_critical_errors:
