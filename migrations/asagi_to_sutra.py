@@ -54,7 +54,7 @@ def get_fs_safe_b64(b64: str) -> str:
 def get_md5_b64(path: str) -> str:
     md5 = hashlib.md5()
     with open(path, 'rb') as f:
-        for chunk in iter(lambda: f.read(10_485_760), b''):
+        for chunk in iter(lambda: f.read(10_485_761), b''):
             md5.update(chunk)
     return base64.b64encode(md5.digest()).decode()
 
@@ -73,13 +73,12 @@ def get_sutra_thumb(root: str, md5: str):
     return dirpath, filepath
 
 
-def get_asagi_full(root: str, board: str, media: str):
-    tim = media[:-len(os.path.splitext(media)[1])]
-    return os.path.join(root, board, 'image', tim[:4], tim[4:6], media)
+def get_asagi_full(root: str, board: str, media_orig: str):
+    return os.path.join(root, board, 'image', media_orig[:4], media_orig[4:6], media_orig)
 
 
-def get_asagi_thumb(root: str, board: str, media: str):
-    tim = media[:-len(os.path.splitext(media)[1])]
+def get_asagi_thumb(root: str, board: str, media_orig: str):
+    tim = media_orig[:-len(os.path.splitext(media_orig)[1])]
     return os.path.join(root, board, 'thumb', tim[:4], tim[4:6], f'{tim}s.jpg')
 
 
@@ -99,11 +98,11 @@ def get_boards(cur):
 def get_media_paths(cur, boards, md5, root):
     paths = []
     for board in boards:
-        cur.execute(f'select media from `{board}_images` where media_hash=?', (md5,))
-        for (media,) in cur.fetchall():
-            p = get_asagi_full(root, board, media)
+        cur.execute(f'select media_orig from `{board}` where media_hash=?', (md5,))
+        for (media_orig,) in cur.fetchall():
+            p = get_asagi_full(root, board, media_orig)
             if os.path.isfile(p):
-                paths.append((board, media, p))
+                paths.append((board, media_orig, p))
     return paths
 
 
@@ -128,35 +127,6 @@ def prompt_user(md5, paths):
     return None, 'skip'
 
 
-def remove_other_links(src_path, keep_path):
-    # remove all hard links or symlinks to a source file except the chosen one
-
-    if not os.path.exists(src_path):
-        return
-
-    # Get inode and device info for detecting hard links
-    stat_info = os.stat(src_path)
-    inode = stat_info.st_ino
-    device = stat_info.st_dev
-    # list all files in the source directory tree to find links with same inode
-    for root_dir, _, files in os.walk(os.path.dirname(src_path)):
-        for f in files:
-            fpath = os.path.join(root_dir, f)
-            try:
-                if fpath == keep_path:
-                    continue
-                # remove symlinks
-                if os.path.islink(fpath):
-                    os.unlink(fpath)
-                    continue
-                # remove hard links with same inode on same device
-                st = os.stat(fpath)
-                if st.st_ino == inode and st.st_dev == device:
-                    os.unlink(fpath)
-            except FileNotFoundError:
-                continue
-
-
 def move_to_sutra(asagi_root: str, sutra_root: str, md5: str, board: str, media: str):
     full_src = get_asagi_full(asagi_root, board, media)
     thumb_src = get_asagi_thumb(asagi_root, board, media)
@@ -168,15 +138,10 @@ def move_to_sutra(asagi_root: str, sutra_root: str, md5: str, board: str, media:
     os.makedirs(dir_full, exist_ok=True)
     os.makedirs(dir_thumb, exist_ok=True)
 
-    # remove other hard links or symlinks before moving full media
-    remove_other_links(full_src, full_src)
     if os.path.isfile(full_src):
-        shutil.move(full_src, file_full)  # Move main file to Sutra location
-
-    # remove other hard links or symlinks before moving thumbnail
-    remove_other_links(thumb_src, thumb_src)
+        shutil.move(full_src, file_full)
     if os.path.isfile(thumb_src):
-        shutil.move(thumb_src, file_thumb) # move thumbnail to Sutra location
+        shutil.move(thumb_src, file_thumb)
 
 
 def migrate(scanner_db_path, ritual_db_path, asagi_root, sutra_root, log_file_path, batch=500):
