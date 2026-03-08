@@ -13,7 +13,6 @@ from utils import (
     get_media_url,
     sleep,
     get_md5_b64_hash,
-    get_sha256_hash,
     log_util,
     makedir_p,
 )
@@ -167,9 +166,7 @@ class MediaFP(ABC):
     ):
         for pid in full_pids:
             if pid not in pid_2_post:
-                configs.logger.info(
-                    f'[{board}] Post {pid} not found in pid_2_post, skipping full media download'
-                )
+                configs.logger.info(f'[{board}] Post {pid} not found in pid_2_post, skipping full media download')
                 continue
 
             post = pid_2_post[pid]
@@ -182,9 +179,7 @@ class MediaFP(ABC):
 
         for pid in thumb_pids:
             if pid not in pid_2_post:
-                configs.logger.info(
-                    f'[{board}] Post {pid} not found in pid_2_post, skipping thumbnail download'
-                )
+                configs.logger.info(f'[{board}] Post {pid} not found in pid_2_post, skipping thumbnail download')
                 continue
 
             post = pid_2_post[pid]
@@ -248,6 +243,40 @@ class SutraMediaFP(MediaFP):
         self.scanner_queue = []
 
 
+    def download_media_for_ids(
+        self,
+        board: str,
+        pid_2_post: dict[int, dict],
+        full_pids: set[int],
+        thumb_pids: set[int]
+    ):
+        # We can avoid downloading existing api md5 files with os.path.isfile(),
+        # but to avoid downloading files with md5s that differ from the report api md5s, we do a scanner-db query
+
+        md5_to_pid = {}
+        for pid in full_pids:
+            if pid in pid_2_post and (md5 := pid_2_post[pid]['md5']):
+                md5_to_pid[md5] = pid
+
+        existing_md5s = set()
+        if md5_to_pid:
+            placeholders = ','.join(['?'] * len(md5_to_pid))
+            sql = f'select md5_computed from hashtab where md5_computed in ({placeholders}) and is_saved = 1;'
+            params = tuple(md5_to_pid.keys())
+            existing_md5s = {row[0] for row in self.scanner_db.run_query_tuple(sql, params)}
+
+        remove_pids = {md5_to_pid[md5] for md5 in existing_md5s}
+
+        if remove_pids:
+            full_pids.difference_update(remove_pids)
+            thumb_pids.difference_update(remove_pids)
+
+            for pid in remove_pids:
+                pid_2_post.pop(pid, None)  # avoid stale posts reaching downloader
+
+        super().download_media_for_ids(board, pid_2_post, full_pids, thumb_pids)
+
+
     def flush(self, board: str):
         super().flush(board)
         self.flush_scanner()
@@ -259,13 +288,10 @@ class SutraMediaFP(MediaFP):
 
 
     def get_dirpath_and_filename(self, board: str, media_type: MediaType, post: dict) -> tuple[str, str]:
-        ext = post['ext']
-        sha256 = post['sha256']
-
         if media_type == MediaType.full_media:
-            filename = f'{sha256}{ext}'
+            filename = f'{post['filename_md5']}{post['ext']}'
         elif media_type == MediaType.thumbnail:
-            filename = f'{sha256}.jpg'
+            filename = f'{post['filename_md5']}.jpg'
         else:
             raise ValueError(media_type)
 
@@ -281,8 +307,17 @@ class SutraMediaFP(MediaFP):
 
 
     def download_full_media(self, url: str, post: dict, board: str):
-        # The sequence of steps for Sutra are a bit different from Asagi
-        # because we need to fetch the file content before creating the SHA256 hash / filename
+        """
+        md5 is cracked, meaning someone could upload files with specific md5 hashes with the hopes of
+        erasing existing content in archives. We can avoid that by never overwriting existing files.
+        """
+        # first check if the api md5 exists on disk
+        post['filename_md5'] = post['md5']
+        dirpath, filename = self.get_dirpath_and_filename(board, MediaType.full_media, post)
+        filepath = os.path.join(dirpath, filename)
+
+        if os.path.isfile(filepath):
+            return
 
         content = wrap_fetch_media_bytes(self.fetcher.session, url, post['ext'])
         if not content:
@@ -294,27 +329,24 @@ class SutraMediaFP(MediaFP):
         if not self.should_write_to_disk(url, post, MediaType.full_media, content, fsize_computed=fsize_computed, md5_computed=md5_computed):
             return
 
-        sha256 = get_sha256_hash(content)
-        post['sha256'] = sha256 # tack on sha256 for filename usage
-
+        # now check if the downloaded file md5 exists on disk
+        post['filename_md5'] = md5_computed
         dirpath, filename = self.get_dirpath_and_filename(board, MediaType.full_media, post)
         filepath = os.path.join(dirpath, filename)
 
         if os.path.isfile(filepath):
-            # TODO before we ever get here, we can mitigate downloading identical files using (md5, fsize, ext)
             return
 
         self.save(post, board, MediaType.full_media, content, dirpath=dirpath, filename=filename)
 
         self.scanner_queue.append((
             dirpath,
-            sha256,
+            md5_computed,
             post['ext'],
             post['md5'],
             md5_computed,
             post['fsize'],
             fsize_computed,
-            sha256,
             0,
             1,
             0,
@@ -331,8 +363,8 @@ class SutraMediaFP(MediaFP):
 
         sql_string = '''
         insert or ignore into hashtab_view
-        (dirpath, filename_no_ext, ext, md5, md5_computed, fsize, fsize_computed, sha256, is_banned, is_saved, has_error)
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (dirpath, filename_no_ext, ext, md5, md5_computed, fsize, fsize_computed, is_banned, is_saved)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ;'''
 
         self.scanner_db.run_query_many(sql_string, self.scanner_queue, commit=True)

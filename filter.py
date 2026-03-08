@@ -31,6 +31,7 @@ class Filter:
 
         self.banned_media_hashes: set[str] = set()
 
+
     def set_tid_2_posts(self, tid_2_posts: dict[int, list[dict]]):
         self.tid_2_posts = tid_2_posts
 
