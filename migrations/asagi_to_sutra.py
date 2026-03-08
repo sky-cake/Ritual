@@ -59,8 +59,14 @@ def get_md5_b64(path: str) -> str:
     return base64.b64encode(md5.digest()).decode()
 
 
-def sanitize_b64_for_path(b64: str) -> str:
-    return b64.replace('+', '-').replace('/', '_')
+_b64_fs_trans = str.maketrans({
+    '+': '-',
+    '/': '_',
+})
+
+
+def get_fs_safe_b64(b64: str) -> str:
+    return b64.translate(_b64_fs_trans)
 
 
 def ensure_parent(path: str):
