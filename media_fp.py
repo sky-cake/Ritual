@@ -16,7 +16,6 @@ from utils import (
     log_util,
     makedir_p,
 )
-from db.ritual import RitualDb
 
 
 def wrap_fetch_media_bytes(session: Session, url: str, ext: str) -> bytes | None:
@@ -33,10 +32,17 @@ def wrap_fetch_media_bytes(session: Session, url: str, ext: str) -> bytes | None
 
 
 class MediaFP(ABC):
-    def __init__(self, fetcher: Fetcher, media_save_path: str, ritual_db: RitualDb):
+    def __init__(self, fetcher: Fetcher, media_save_path: str):
         self.fetcher = fetcher
         self.media_save_path = media_save_path
-        self.ritual_db = ritual_db
+
+
+    def flush(self):
+        pass
+
+
+    def clean_up(self):
+        pass
 
 
     @abstractmethod
@@ -163,9 +169,8 @@ class MediaFP(ABC):
 
 
 class AsagiMediaFP(MediaFP):
-    def __init__(self, fetcher: Fetcher, media_save_path: str, ritual_db):
+    def __init__(self, fetcher: Fetcher, media_save_path: str):
         super().__init__(fetcher, media_save_path)
-        self.ritual_db = ritual_db
 
 
     def get_dirpath_and_filename(self, board: str, media_type: MediaType, post: dict) -> tuple[str, str]:
@@ -206,10 +211,19 @@ class AsagiMediaFP(MediaFP):
 
 
 class SutraMediaFP(MediaFP):
-    def __init__(self, fetcher: Fetcher, media_save_path: str, scanner_db: ScannerDb):
-        super().__init__(fetcher, media_save_path)
-        self.scanner_db = scanner_db
+    def __init__(self, fetcher: Fetcher, media_save_path: str):
+        super().__init__(fetcher, media_save_path, None)
 
+        self.scanner_db = ScannerDb(configs.scanner_db_path)
+        self.scanner_db.init_db()
+
+        self.scanner_insert_queue = []
+
+
+    def clean_up(self):
+        self.flush()
+        self.scanner_db.save_and_close()
+        
 
     def get_dirpath_and_filename(self, board: str, media_type: MediaType, post: dict) -> tuple[str, str]:
         ext = post['ext']
@@ -259,36 +273,30 @@ class SutraMediaFP(MediaFP):
 
         self.save(post, board, MediaType.full_media, content, dirpath=dirpath, filename=filename)
 
-        # TODO ext and directory table inserts
-        # TODO batch inserts
+        self.scanner_insert_queue.append((
+            dirpath,
+            sha256,
+            post['ext'],
+            post['md5'],
+            md5_computed,
+            post['fsize'],
+            fsize_computed,
+            sha256,
+            0,
+            1,
+            0,
+        ))
 
-        self.scanner_db.run_query_tuple(
-            '''
-            insert or ignore into hashtab 
-            (
-                dir_id,
-                filename_no_ext,
-                ext_id,
-                md5,
-                md5_computed,
-                fsize,
-                fsize_computed,
-                sha256,
-                is_banned,
-                is_saved,
-                is_error
-            )
-            values (?, ?, ?, ?, ?, ?, ?, ?, 0, 1, 0)
-            ;''',
-            (
-                None,
-                sha256,
-                ext_id,
-                post['md5'],
-                md5_computed,
-                post['fsize'],
-                fsize_computed,
-                sha256,
-            ),
-            commit=True
-        )
+
+    def flush(self):
+        if not self.scanner_insert_queue:
+            return
+
+        sql_string = '''
+        insert or ignore into hashtab_view
+        (dirpath, filename_no_ext, ext, md5, md5_computed, fsize, fsize_computed, sha256, is_banned, is_saved, has_error)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ;'''
+
+        self.scanner_db.run_query_many(sql_string, self.scanner_insert_queue, commit=True)
+        self.scanner_insert_queue = []

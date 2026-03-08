@@ -67,6 +67,7 @@ def process_board(board: str, db: RitualDb, fetcher: Fetcher, loop: Loop, state:
     filter.get_pids_for_download()
 
     media_fp.download_media_for_ids(board, posts.pid_2_post, filter.full_pids, filter.thumb_pids)
+    media_fp.flush()
 
     # TODO insert records into <board>_images table in a batch
     # media_hash = post['md5']
@@ -77,29 +78,26 @@ def process_board(board: str, db: RitualDb, fetcher: Fetcher, loop: Loop, state:
     loop.set_board_duration_minutes(board)
 
 
-def save_on_error(state: State, db: RitualDb, scanner_db: ScannerDb | None = None):
+def save_on_error(state: State, db: RitualDb, media_fp: MediaFP):
     configs.logger.info('Saving state...')
     state.save()
-    configs.logger.info('Done')
-    configs.logger.info('Saving database...')
+    configs.logger.info('  Done')
+
+    configs.logger.info('Saving ritual database...')
     db.save_and_close()
-    configs.logger.info('Done')
+    configs.logger.info('  Done')
 
-    if scanner_db:
-        scanner_db.save_and_close()
+    configs.logger.info('Cleaning up media fp...')
+    media_fp.clean_up()
+    configs.logger.info('  Done')
 
 
-def get_scanner_db_and_media_fp(fetcher: Fetcher, db: RitualDb):
-    scanner_db = None
+def get_media_fp(fetcher: Fetcher, db: RitualDb) -> MediaFP:
     if configs.filepath_construct == 'sutra':
-        scanner_db = ScannerDb(configs.scanner_db_path)
-        scanner_db.init_db()
-        media_fp = SutraMediaFP(fetcher, configs.media_save_path, scanner_db)
-        return scanner_db, media_fp
-    
+        return SutraMediaFP(fetcher, configs.media_save_path)
+
     if configs.filepath_construct == 'asagi':
-        media_fp = AsagiMediaFP(fetcher, configs.media_save_path, db)
-        return scanner_db, media_fp
+        return AsagiMediaFP(fetcher, configs.media_save_path, db)
 
     raise ValueError(configs.filepath_construct)
 
@@ -107,11 +105,10 @@ def get_scanner_db_and_media_fp(fetcher: Fetcher, db: RitualDb):
 def main():
     Init()
     db = create_ritual_db()
+    media_fp = get_media_fp(fetcher, db)
     loop = Loop()
     state = State(loop)
     fetcher = Fetcher(state)
-
-    scanner_db, media_fp = get_scanner_db_and_media_fp(fetcher, db)
 
     critical_error_count = 0
     while True:
@@ -128,13 +125,13 @@ def main():
 
         except KeyboardInterrupt:
             configs.logger.info('Received interrupt signal')
-            save_on_error(state, db,scanner_db=scanner_db)
+            save_on_error(state, db, media_fp)
             break
 
         except Exception as e:
             configs.logger.error(f'Critical error in main loop: {e}')
             configs.logger.error(traceback.format_exc())
-            save_on_error(state, db, scanner_db=scanner_db)
+            save_on_error(state, db, media_fp)
             critical_error_count += 1
             n_critical_errors = 5
             if critical_error_count >= n_critical_errors:
