@@ -88,8 +88,6 @@ def main():
             if os.path.isfile(thb_path):
                 skipped += 1
                 scanned += 1
-                if scanned < 10:
-                    print(img_path, thb_path, ext)
                 continue
 
             while len(futures) >= MAX_PENDING_FUTURES:
