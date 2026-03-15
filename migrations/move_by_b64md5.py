@@ -75,10 +75,11 @@ def main():
 
         count_print += 1
         if count_print >= print_page_size:
-            print(f'({count_print}) {count_moved_img=} {count_skip_img=} {count_moved_thb=} {count_skip_thb=} {count_not_found_thb=}')
+            print(f'\r({count_print}) {count_moved_img=} {count_skip_img=} {count_moved_thb=} {count_skip_thb=} {count_not_found_thb=}', end='', flush=True)
             count_print = 0
 
-    print(f'{count_moved_img=} {count_skip_img=} {count_moved_thb=} {count_skip_thb=} {count_not_found_thb=}')
+    print()
+    print(f'\r{count_moved_img=} {count_skip_img=} {count_moved_thb=} {count_skip_thb=} {count_not_found_thb=}', end='', flush=True)
 
 
 if __name__=='__main__':
