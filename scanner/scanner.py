@@ -12,23 +12,31 @@ from utils import iter_media_files
 def gather_filesystem(root_path: str, db: ScannerDb, skip_dirnames: set[str], exts: set[str], batch_size: int):
     """
     Crawls a root path recursively, creating entries of existing files in the sql table `hashtab`.
-    Uses `hashtab_view` and `trigger_insert_hashtab_view` to automatically handle directory and extension mappings to ids.
     """
     counter = Counter('catalog_filesystem', batch_size)
 
-    sql_insert = '''insert or ignore into hashtab_view (dirpath, filename_no_ext, ext) values (?,?,?);'''
+    dir_cache = db.fetch_dir_map()
+    ext_cache = db.fetch_ext_map()
+
+    sql_insert_hashtab = '''
+        insert or ignore into hashtab (dir_id, filename_no_ext, ext_id)
+        values (?,?,?);
+    '''
 
     for batch in batched(iter_media_files(root_path, skip_dirnames=skip_dirnames, valid_exts=exts), batch_size):
-        batch = tuple((dirpath, filename_no_ext, ext) for dirpath, filename_no_ext, ext in batch)
-        db.run_query_many(sql_insert, batch, commit=True)
+        params = []
+        for dirpath, filename_no_ext, ext in batch:
+            dir_id = db.get_and_set_dir_id(dir_cache, dirpath)
+            ext_id = db.get_and_set_ext_id(ext_cache, ext)
+            params.append((dir_id, filename_no_ext, ext_id))
+
+        db.run_query_many(sql_insert_hashtab, params=params, commit=True)
         counter(increment_by=len(batch))
+
     print('\ncatalog_filesystem, completed')
 
 
 def gather_metadata(db: ScannerDb, batch_size: int):
-    """
-    Upserts hashtab with metadata.
-    """
     counter = Counter('gather_metadata', batch_size)
 
     missing_meta_file_count = int(db.run_query_tuple('select count(*) from hashtab where md5_computed is null and is_saved is null;')[0][0])
@@ -40,6 +48,7 @@ def gather_metadata(db: ScannerDb, batch_size: int):
 
     sql_select = f'''
     select
+        h.rowid,
         d.dirpath,
         h.filename_no_ext,
         e.ext
@@ -51,19 +60,7 @@ def gather_metadata(db: ScannerDb, batch_size: int):
     limit {int(batch_size)};
     '''
 
-    # trigger handles the upsert on hashtab
-    sql_insert = '''
-    insert or ignore into hashtab_view
-    (
-        dirpath,
-        filename_no_ext,
-        ext,
-        md5_computed,
-        fsize_computed,
-        is_saved
-    )
-    values (?,?,?,?,?,?);
-    '''
+    sql_update = '''update hashtab set md5_computed = ?, fsize_computed = ?, is_saved = ? where rowid = ?'''
 
     while True:
         rows = db.run_query_tuple(sql_select)
@@ -71,8 +68,8 @@ def gather_metadata(db: ScannerDb, batch_size: int):
             break
 
         params = []
-        for row in rows:
-            fullpath = os.path.join(row[0], f'{row[1]}.{row[2]}')
+        for rowid, dirpath, filename_no_ext, ext in rows:
+            fullpath = os.path.join(dirpath, f'{filename_no_ext}.{ext}')
 
             # file could have been deleted since the gather_filesystem()'s last run
             if not os.path.isfile(fullpath):
@@ -85,15 +82,13 @@ def gather_metadata(db: ScannerDb, batch_size: int):
                 fsize_computed = os.path.getsize(fullpath)
 
             params.append((
-                row[0],
-                row[1],
-                row[2],
                 md5_computed,
                 fsize_computed,
                 is_saved,
+                rowid,
             ))
 
-        db.run_query_many(sql_insert, params=params)
+        db.run_query_many(sql_update, params=params, commit=True)
         counter(increment_by=len(rows))
     print('\ngather_metadata, completed')
 

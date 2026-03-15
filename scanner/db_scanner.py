@@ -37,69 +37,6 @@ class ScannerDb(SqliteDb):
 
         create index if not exists idx_hashtab_md5           on hashtab (md5);;
         create index if not exists idx_hashtab_md5_computed  on hashtab (md5_computed);;
-
-        --
-        -- view to allow inserting using names instead of ids
-        --
-
-        create view if not exists hashtab_view as
-            select
-                d.dirpath,
-                h.filename_no_ext,
-                e.ext,
-                h.md5,
-                h.md5_computed,
-                h.fsize,
-                h.fsize_computed,
-                h.is_banned,
-                h.is_saved
-            from hashtab h
-                join directory d using(dir_id)
-                join extension e using(ext_id)
-        ;;
-
-        --
-        -- trigger to auto-insert directory and extension
-        --
-
-        create trigger if not exists trigger_insert_hashtab_view
-        instead of insert on hashtab_view
-        begin
-            insert into directory (dirpath) values (new.dirpath) on conflict (dirpath) do nothing;
-
-            insert into extension (ext) values (new.ext) on conflict (ext) do nothing;
-
-            insert into hashtab (
-                dir_id,
-                filename_no_ext,
-                ext_id,
-                md5,
-                md5_computed,
-                fsize,
-                fsize_computed,
-                is_banned,
-                is_saved
-            )
-            values (
-                (select dir_id from directory where dirpath=new.dirpath),
-                new.filename_no_ext,
-                (select ext_id from extension where ext=new.ext),
-                new.md5,
-                new.md5_computed,
-                new.fsize,
-                new.fsize_computed,
-                new.is_banned,
-                new.is_saved
-            )
-            on conflict (dir_id, filename_no_ext, ext_id) do update set
-                md5            = excluded.md5,
-                md5_computed   = excluded.md5_computed,
-                fsize          = excluded.fsize,
-                fsize_computed = excluded.fsize_computed,
-                is_banned      = excluded.is_banned,
-                is_saved       = excluded.is_saved
-            ;
-        end;;
         '''
 
         for sql in sqls.split(';;'):
@@ -109,33 +46,45 @@ class ScannerDb(SqliteDb):
         self.save()
 
 
-    # def fetch_ext_map(self) -> dict[str, int]:
-    #     return {row[0]: row[1] for row in self.run_query_tuple('select ext, ext_id from extension;')}
+    def fetch_dir_map(self) -> dict[str, int]:
+        return {row[0]: row[1] for row in self.run_query_tuple('select dirpath, dir_id from directory;')}
 
 
-    # def get_and_set_ext_id(self, cache: dict[str, int], ext: str) -> int:
-    #     '''
-    #     - ext has no leading dot
-    #     - ext is case sensitive
-    #     '''
-
-    #     if ext_id := cache.get(ext):
-    #         return ext_id
-
-    #     self.run_query_tuple('insert or ignore into extension (ext) values (?);', (ext,))
-    #     cache[ext] = self.run_query_tuple('select ext_id from extension where ext=?;', (ext,))[0][0]
-    #     return cache[ext]
+    def fetch_ext_map(self) -> dict[str, int]:
+        return {row[0]: row[1] for row in self.run_query_tuple('select ext, ext_id from extension;')}
 
 
-    # def get_and_set_dir_id(self, cache: dict[str, int], dirpath: str) -> int:
-    #     '''
-    #     - dirpath has no trailing slash
-    #     - dirpath is the absolute path
-    #     '''
-    #     if dir_id := cache.get(dirpath):
-    #         return dir_id
+    def get_and_set_dir_id(self, cache: dict[str, int], dirpath: str) -> int:
+        '''
+        - dirpath has no trailing slash
+        - dirpath is the absolute path
+        '''
+        if dir_id := cache.get(dirpath):
+            return dir_id
 
-    #     self.run_query_tuple('insert or ignore into directory (dirpath) values (?);', (dirpath,))
-    #     cache[dirpath] = self.run_query_tuple('select dir_id from directory where dirpath=?;', (dirpath,))[0][0]
+        row = self.run_query_tuple('insert into directory (dirpath) values (?) on conflict(dirpath) do nothing returning dir_id;', (dirpath,))
+        if row:
+            dir_id = row[0][0]
+        else:
+            dir_id = self.run_query_tuple('select dir_id from directory where dirpath=?;', (dirpath,))[0][0]
 
-    #     return cache[dirpath]
+        cache[dirpath] = dir_id
+        return dir_id
+
+
+    def get_and_set_ext_id(self, cache: dict[str, int], ext: str) -> int:
+        '''
+        - ext has no leading dot
+        - ext is case sensitive
+        '''
+        if ext_id := cache.get(ext):
+            return ext_id
+
+        row = self.run_query_tuple('insert into extension (ext) values (?) on conflict(ext) do nothing returning ext_id;', (ext,))
+        if row:
+            ext_id = row[0][0]
+        else:
+            ext_id = self.run_query_tuple('select ext_id from extension where ext=?;', (ext,))[0][0]
+
+        cache[ext] = ext_id
+        return ext_id

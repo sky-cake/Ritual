@@ -21,3 +21,4 @@ launch.json
 asagi-tables/
 asagi.toml
 scanner.toml
+!scanner/configs.py

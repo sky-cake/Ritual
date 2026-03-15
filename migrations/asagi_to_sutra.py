@@ -1,200 +1,177 @@
 """
-There exists a bunch of hard linked inodes from running fclones https://github.com/pkolaczk/fclones in the past with the following commands,
+There exists a bunch of hard linked inodes from running fclones https://github.com/pkolaczk/fclones
+in the past with the following commands,
 
-1. fclones group ./media --cache ./fcc > dupes.txt
-2. fclones link --priority oldest < dupes.txt
+    1. fclones group ./media --cache ./fcc > dupes.txt
+    2. fclones link --priority newest < dupes.txt
 
-So now the hard links should be removed, and a purely de-duplicated root media folder,
+So now the hard links should be removed, leaving a purely de-duplicated root media folder,
 
-1. fclones group /path/to/root/media --match-links > dups_ml.txt
-    - treats all linked files as duplicates
-    - https://github.com/pkolaczk/fclones?tab=readme-ov-file#handling-links
-2. fclones remove --priority oldest <dupes.txt
-    - remove the oldest replicas
-    - https://github.com/pkolaczk/fclones?tab=readme-ov-file#removing-files
+    1. fclones group /path/to/root/media --match-links > dups_ml.txt
+        - treats all linked files as duplicates
+        - https://github.com/pkolaczk/fclones?tab=readme-ov-file#handling-links
+    2. fclones remove --priority newest < dupes.txt
+        - remove the newest replicas. The olders files are less likely to be maliciously md5 overwritten
+        - https://github.com/pkolaczk/fclones?tab=readme-ov-file#removing-files
 
-Pseudo code,
-
-- loop over batches of `hashtab.md5_computed` hashes in scanner.db
-    - look for `<board>.media_hash` matches in ritual.db across all boards
-    - check if any AsagiMediaFP `<board>.media_orig` filepaths exist
-        - if none match, or no filepaths exist
-            - continue
-        - if multiple filepaths for the media hash exist, assert all their md5 hashes are equal.
-            - if they are not, prompt the user
-                - print the paths of the differing files
-                - ask the user what to do,
-                    - default: (S)kip and log each media hash on a line like `<md5>: [<filepath1>, <filepath2>, ...]`
-                    -          (P)ick an file to migrate, delete the others. Requires a second prompt "Choose filepath (1-N): ".
-                    -          (R)andom file is chosen to migrate, the others are deleted.
-                    -          (D)elete all files. Requires a second "Are you sure? (y/n)" prompt.
-            - else, pick any file
-                - full media and thumbnail files get moves to the Sutra filepaths
-                - delete the remaining matching AsagiMediaFPs
-        - if one filepath for the media hash exists,
-            - full media and thumbnail files get moves to the Sutra filepaths
+Once that is done, this script should migrates from `media_fp.AsagiMediaFP` to `media_fp.SutraMediaFP`.
 """
 
 
 import os
 import sqlite3
-import hashlib
-import random
-import shutil
-import base64
 
 
-_b64_fs_table = str.maketrans({'+': '-', '/': '_'})
+all_boards = [
+    '3','a','aco','adv','an','b','bant','biz','c','cgl','ck','cm','co','diy','e','f','fa','fit','g','gd','gif','h','hc','his','hm','hr','i','ic','int','jp','k','lgbt','lit','m','mlp','mu','n','news','o','out','p','po','pol','pw','qst','r','r9k','s','s4s','sci','soc','sp','t','tg','toy','trv','tv','u','v','vg','vip','vm','vmg','vp','vr','vrpg','vst','vt','w','wg','wsg','wsr','x','xs','y',
+]
 
 
-def get_fs_safe_b64(b64: str) -> str:
-    return b64.translate(_b64_fs_table)
+def get_valid_boards(db_path_ritual: str) -> list[str]:
+    valid = []
+    con = sqlite3.connect(db_path_ritual)
+    cur = con.cursor()
+    for board in all_boards:
+        try:
+            cur.execute(f'SELECT 1 FROM `{board}` LIMIT 1')
+            valid.append(board)
+            print(f'  {board}: exists')
+        except sqlite3.OperationalError:
+            print(f'  {board}: not found')
+    con.close()
+    return valid
 
 
-def get_md5_b64(path: str) -> str:
-    md5 = hashlib.md5()
-    with open(path, 'rb') as f:
-        for chunk in iter(lambda: f.read(10_485_761), b''):
-            md5.update(chunk)
-    return base64.b64encode(md5.digest()).decode()
+def confirm(prompt: str) -> bool:
+    while True:
+        response = input(f'{prompt} [y/n]: ').strip().lower()
+        if response in ('y', 'yes', 'true'):
+            return True
+        if response in ('n', 'no', 'false'):
+            return False
+        print('Please enter y or n')
 
 
-def get_sutra_paths(root: str, md5: str, ext: str):
-    safe = get_fs_safe_b64(md5)
-    dirpath = os.path.join(root, 'image', safe[:4], safe[4:6], safe[6:8])
-    filepath = os.path.join(dirpath, f'{safe}{ext}')
-    return dirpath, filepath
+def build_union_sql(boards: list[str]) -> str:
+    parts = [f'SELECT media_hash, media_orig FROM `{b}`' for b in boards]
+    return ' UNION ALL '.join(parts)
 
 
-def get_sutra_thumb(root: str, md5: str):
-    safe = get_fs_safe_b64(md5)
-    dirpath = os.path.join(root, 'thumb', safe[:4], safe[4:6], safe[6:8])
-    filepath = os.path.join(dirpath, f'{safe}.jpg')
-    return dirpath, filepath
+def migrate(boards: list[str], db_path_scanner: str, db_path_ritual: str, root_asagi: str, root_sutra: str):
+    scanner_con = sqlite3.connect(db_path_scanner)
+    ritual_con = sqlite3.connect(db_path_ritual)
 
-
-def get_asagi_full(root: str, board: str, media_orig: str):
-    return os.path.join(root, board, 'image', media_orig[:4], media_orig[4:6], media_orig)
-
-
-def get_asagi_thumb(root: str, board: str, media_orig: str):
-    tim = media_orig[:-len(os.path.splitext(media_orig)[1])]
-    return os.path.join(root, board, 'thumb', tim[:4], tim[4:6], f'{tim}s.jpg')
-
-
-def query_hashes(cur, batch: int):
-    rows = cur.fetchmany(batch)
-    while rows:
-        yield [r[0] for r in rows]
-        rows = cur.fetchmany(batch)
-
-
-def get_boards(cur):
-    cur.execute("select name from sqlite_master where type='table'")
-    tables = [r[0] for r in cur.fetchall() if r[0].endswith('_images')]
-    return [t[:-7] for t in tables]
-
-
-def get_media_paths(cur, boards, md5, root):
-    paths = []
-    for board in boards:
-        cur.execute(f'select media_orig from `{board}` where media_hash=?', (md5,))
-        for (media_orig,) in cur.fetchall():
-            p = get_asagi_full(root, board, media_orig)
-            if os.path.isfile(p):
-                paths.append((board, media_orig, p))
-    return paths
-
-
-def verify_same_md5(paths):
-    hashes = {get_md5_b64(p) for p in paths}
-    return len(hashes) == 1
-
-
-def prompt_user(md5, paths):
-    print('\nconflict for', md5)
-    for i, p in enumerate(paths, 1):
-        print(f'{i}: {p}')
-    print('(S)kip\n(P)ick\n(R)andom\n(D)elete all')
-    choice = input('choice: ').lower().strip()
-    if choice == 'p':
-        idx = int(input(f'Choose filepath (1-{len(paths)}): '))
-        return paths[idx - 1], 'pick'
-    if choice == 'r':
-        return random.choice(paths), 'pick'
-    if choice == 'd' and input('Are you sure? (y/n) ').lower() == 'y':
-        return None, 'delete'
-    return None, 'skip'
-
-
-def move_to_sutra(asagi_root: str, sutra_root: str, md5: str, board: str, media: str):
-    full_src = get_asagi_full(asagi_root, board, media)
-    thumb_src = get_asagi_thumb(asagi_root, board, media)
-    ext = os.path.splitext(media)[1]
-
-    dir_full, file_full = get_sutra_paths(sutra_root, md5, ext)
-    dir_thumb, file_thumb = get_sutra_thumb(sutra_root, md5)
-
-    os.makedirs(dir_full, exist_ok=True)
-    os.makedirs(dir_thumb, exist_ok=True)
-
-    if os.path.isfile(full_src):
-        shutil.move(full_src, file_full)
-    if os.path.isfile(thumb_src):
-        shutil.move(thumb_src, file_thumb)
-
-
-def migrate(scanner_db_path, ritual_db_path, asagi_root, sutra_root, log_file_path, batch=500):
-    scanner_con = sqlite3.connect(scanner_db_path)
     scanner_cur = scanner_con.cursor()
-    scanner_cur.execute('select md5_computed from hashtab')
-
-    ritual_con = sqlite3.connect(ritual_db_path)
     ritual_cur = ritual_con.cursor()
-    boards = get_boards(ritual_cur)
 
-    log_file = open(log_file_path, 'a')
+    try:
+        scanner_cur.execute('SELECT COUNT(*) FROM hashtab')
+        total_in_scanner = scanner_cur.fetchone()[0]
+        print(f'total files in scanner: {total_in_scanner}')
 
-    for hashes in query_hashes(scanner_cur, batch):
-        for md5 in hashes:
-            matches = get_media_paths(ritual_cur, boards, md5, asagi_root)
-            if not matches:
-                continue
+        scanner_cur.execute('SELECT filename_no_ext || "." || ext FROM hashtab JOIN extension USING (ext_id)')
 
-            files = [p for _, _, p in matches]
-            if len(files) > 1:
-                if not verify_same_md5(files):
-                    chosen, action = prompt_user(md5, files)
-                    if action == 'skip':
-                        log_file.write(f'{md5}: {[str(p) for p in files]}\n')
-                        continue
-                    if action == 'delete':
-                        for p in files:
-                            os.remove(p)
-                        continue
-                else:
-                    chosen = files[0]
-            else:
-                chosen = files[0]
+        sutra_full_root = os.path.join(root_sutra, 'image')
+        sutra_thumb_root = os.path.join(root_sutra, 'thumb')
 
-            board, media, _ = next(x for x in matches if x[2] == chosen)
-            move_to_sutra(asagi_root, sutra_root, md5, board, media)
+        union_sql = build_union_sql(boards)
 
-            for _, _, p in matches:
-                if p != chosen and os.path.isfile(p):
-                    os.remove(p)
+        moved = 0
+        processed = 0
+        dir_cache: set[str] = set()
+        trans_table = str.maketrans({'+': '-', '/': '_'})
 
-    log_file.close()
-    scanner_con.close()
-    ritual_con.close()
+        while True:
+            filenames = [r[0] for r in scanner_cur.fetchmany(1000)]
+            if not filenames:
+                break
+
+            placeholder = ','.join('?' for _ in filenames)
+            sql = f'select media_hash, media_orig from ({union_sql}) where media_orig in ({placeholder})'
+            rows: tuple[str, str] = ritual_cur.execute(sql, filenames)
+
+            for media_hash, media_orig in rows:
+                if not media_hash or not media_orig:
+                    continue
+
+                media_hash = media_hash.translate(trans_table)
+
+                name, ext = media_orig.rsplit('.', 1)
+
+                board = None
+                for b in boards:
+                    if os.path.exists(os.path.join(root_asagi, b, 'image', media_orig[:4], media_orig[4:6], media_orig)):
+                        board = b
+                        break
+                if board is None:
+                    continue
+
+                asagi_full_root = os.path.join(root_asagi, board, 'image')
+                asagi_thumb_root = os.path.join(root_asagi, board, 'thumb')
+
+                src_full = os.path.join(asagi_full_root, media_orig[:4], media_orig[4:6], media_orig)
+
+                thumb_name = f'{name}s.jpg'
+                src_thumb = os.path.join(asagi_thumb_root, thumb_name[:4], thumb_name[4:6], thumb_name)
+
+                dst_full_name = f'{media_hash}.{ext}'
+                dst_thumb_name = f'{media_hash}.jpg'
+
+                dst_full = os.path.join(sutra_full_root, dst_full_name[:2], dst_full_name[2:4], dst_full_name[4:6], dst_full_name)
+                dst_thumb = os.path.join(sutra_thumb_root, dst_thumb_name[:2], dst_thumb_name[2:4], dst_thumb_name[4:6], dst_thumb_name)
+
+                d = os.path.dirname(dst_full)
+                if d not in dir_cache:
+                    os.makedirs(d, exist_ok=True)
+                    dir_cache.add(d)
+
+                d = os.path.dirname(dst_thumb)
+                if d not in dir_cache:
+                    os.makedirs(d, exist_ok=True)
+                    dir_cache.add(d)
+
+                if os.path.exists(src_full):
+                    os.replace(src_full, dst_full)
+                    moved += 1
+
+                if os.path.exists(src_thumb):
+                    os.replace(src_thumb, dst_thumb)
+
+                if moved % 1000 == 0 and moved:
+                    print(f'\rmoved {moved}/{total_in_scanner} ({100*moved//total_in_scanner}%)', end='', flush=True)
+
+            processed += len(filenames)
+            print(f'\rprocessed {processed}/{total_in_scanner} ({100*processed//total_in_scanner}%)', end='', flush=True)
+
+        print(f'\rmoved {moved}/{total_in_scanner} ({100*moved//total_in_scanner}%)')
+
+    finally:
+        scanner_con.close()
+        ritual_con.close()
 
 
 if __name__ == '__main__':
+    db_path_ritual = '/home/dolphin/Documents/code/ritual/ritual.db'
+    db_path_scanner='/home/dolphin/Documents/code/ritual/scanner/scanner.db'
+    root_asagi='/home/dolphin/Documents/code/ritual/media_asagi'
+    root_sutra='/home/dolphin/Documents/code/ritual/media_sutra'
+    
+    print('Checking which boards exist in ritual database...')
+    boards = get_valid_boards(db_path_ritual)
+    
+    if not boards:
+        print('No valid boards found. Exiting.')
+        exit(1)
+    
+    print(f'\nFound {len(boards)} valid boards: {", ".join(boards)}')
+    if not confirm('Proceed with migration?'):
+        print('Aborted.')
+        exit(0)
+    
     migrate(
-        scanner_db_path='/path/to/scanner/scanner.db',
-        ritual_db_path='/path/to/ritual/ritual.db',
-        asagi_root='/path/to/media/asagi',
-        sutra_root='/path/to/media/sutra',
-        log_file_path='/path/to/migration.log',
-        batch=500
+        boards=boards,
+        db_path_scanner=db_path_scanner,
+        db_path_ritual=db_path_ritual,
+        root_asagi=root_asagi,
+        root_sutra=root_sutra,
     )
