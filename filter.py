@@ -139,7 +139,7 @@ class Filter:
         media_hashes = []
         for posts in self.tid_2_posts.values():
             for post in posts:
-                if post_has_file(post) and post.get('md5'):
+                if post_has_file(post):
                     media_hashes.append(post['md5'])
 
         # applies to Asagi and Sutra filepath constructs

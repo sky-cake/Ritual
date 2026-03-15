@@ -36,7 +36,7 @@ media_save_path = make_path('media')
 # Saves media to filepaths like,
 # - full media: `<media_save_path>/img/md5[:2]/md5[2:4]/md5[4:6]/md5.ext/md5<ext>`
 # - thumbnail: `<media_save_path>/thb/md5[:2]/md5[2:4]/md5[4:6]/md5.ext/md5.jpg`
-# Where md5 are computed md5 values (not API-reported), with `+` and `/` replaced by `-` and `_` for filesystem safety.
+# Where md5 are API-reported md5 values, with `+` and `/` replaced by `-` and `_` for filesystem safety.
 # This is new to the image board archiving world, and it avoids downloading and saving duplicates files to our filesystem
 
 
@@ -52,10 +52,6 @@ media_save_path = make_path('media')
 #     3. fclones link --priority oldest < dupes.txt
 
 media_fp = 'asagi' # 'asagi' or 'sutra'
-
-
-# must be set if using media_fp = 'sutra'
-scanner_db_path: str = '' # make_path('scanner.db') # sqlite
 
 
 db_type = 'sqlite' # 'sqlite' or 'mysql'

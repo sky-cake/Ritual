@@ -134,8 +134,9 @@ def get_asagi_value_preview(post: dict) -> str | None:
         return f"{post.get('tim')}s.jpg"
 
 
+post_has_file_keys = ('tim', 'ext', 'md5')
 def post_has_file(post: dict) -> bool:
-    return post.get('tim') and post.get('ext')
+    return all(post.get(k) for k in post_has_file_keys)
 
 
 def create_thumbnail(post: dict, full_path: str, thumb_path: str, logger=None):
