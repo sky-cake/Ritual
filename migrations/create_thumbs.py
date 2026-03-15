@@ -1,6 +1,6 @@
 import os
 import subprocess
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from functools import lru_cache
 
 IMAGE_EXTS = {'jpg', 'jpeg', 'png', 'gif'}
@@ -9,6 +9,7 @@ MEDIA_EXTS = IMAGE_EXTS | VIDEO_EXTS
 
 PRINT_PAGE_SIZE = 5000
 MAX_WORKERS = 32
+MAX_PENDING_FUTURES = 100  # cap to avoid huge memory usage
 
 
 def iter_media_files(root_path: str):
@@ -41,40 +42,25 @@ def is_image_ext(ext: str) -> bool:
 
 def create_thumbnail_from_video(video_path: str, out_path: str, width: int = 400, height: int = 400, quality: int = 25):
     cmd = f'ffmpeg -hide_banner -loglevel error -ss 0 -i "{video_path}" -pix_fmt yuvj420p -q:v 2 -frames:v 1 -f image2pipe - | convert - -resize {width}x{height} -quality {quality} "{out_path}"'
-    subprocess.run(
-        cmd,
-        shell=True,
-        check=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL  # suppress tools that mess with terminal state
-    )
+    subprocess.run(cmd, shell=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def create_thumbnail_from_image(image_path: str, out_path: str, width: int = 400, height: int = 400, quality: int = 25):
     cmd = f'convert "{image_path}" -resize {width}x{height} -quality {quality} "{out_path}"'
-    subprocess.run(
-        cmd,
-        shell=True,
-        check=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
-    )
+    subprocess.run(cmd, shell=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def process_file(img_path: str, thb_path: str, ext: str) -> int:
     try:
         if os.path.isfile(thb_path):
             return 0
-
         os.makedirs(os.path.dirname(thb_path), exist_ok=True)
-
         if is_video_ext(ext):
             create_thumbnail_from_video(img_path, thb_path)
         elif is_image_ext(ext):
             create_thumbnail_from_image(img_path, thb_path)
         else:
             return 0
-
         return 1
     except Exception:
         return 2
@@ -99,39 +85,34 @@ def main():
             thb_rel = rel.rsplit('.', 1)[0] + '.jpg'
             thb_path = os.path.join(thb_root, thb_rel)
 
-            futures.add(pool.submit(process_file, img_path, thb_path, ext))
-            scanned += 1
-
-            if scanned % PRINT_PAGE_SIZE == 0:
-                done = [f for f in futures if f.done()]
-
+            # Wait if too many pending futures
+            while len(futures) >= MAX_PENDING_FUTURES:
+                done, _ = wait(futures, return_when=FIRST_COMPLETED)
                 for f in done:
                     try:
                         r = f.result()
                     except Exception:
                         r = 2
-
                     if r == 1:
                         created += 1
                     elif r == 0:
                         skipped += 1
                     else:
                         errors += 1
-
                     futures.remove(f)
 
-                print(
-                    f'\r({scanned}) created={created} skipped={skipped} errors={errors} pending={len(futures)}',
-                    end='',
-                    flush=True
-                )
+            futures.add(pool.submit(process_file, img_path, thb_path, ext))
+            scanned += 1
 
+            if scanned % PRINT_PAGE_SIZE == 0:
+                print(f'\r({scanned}) created={created} skipped={skipped} errors={errors} pending={len(futures)}', end='', flush=True)
+
+        # Wait for remaining futures
         for f in futures:
             try:
                 r = f.result()
             except Exception:
                 r = 2
-
             if r == 1:
                 created += 1
             elif r == 0:
@@ -140,10 +121,7 @@ def main():
                 errors += 1
 
     print()
-    print(
-        f'final: scanned={scanned} created={created} skipped={skipped} errors={errors}',
-        flush=True
-    )
+    print(f'final: scanned={scanned} created={created} skipped={skipped} errors={errors}', flush=True)
 
 
 if __name__ == '__main__':
