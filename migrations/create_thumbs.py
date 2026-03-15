@@ -41,28 +41,31 @@ def is_image_ext(ext: str) -> bool:
 
 def create_thumbnail_from_video(video_path: str, out_path: str, width: int = 400, height: int = 400, quality: int = 25):
     cmd = f'ffmpeg -hide_banner -loglevel error -ss 0 -i "{video_path}" -pix_fmt yuvj420p -q:v 2 -frames:v 1 -f image2pipe - | convert - -resize {width}x{height} -quality {quality} "{out_path}"'
-    subprocess.run(cmd, shell=True, check=True, stdout=subprocess.DEVNULL)  # external binaries dominate cost
+    subprocess.run(cmd, shell=True, check=True, stdout=subprocess.DEVNULL)
 
 
 def create_thumbnail_from_image(image_path: str, out_path: str, width: int = 400, height: int = 400, quality: int = 25):
     cmd = f'convert "{image_path}" -resize {width}x{height} -quality {quality} "{out_path}"'
-    subprocess.run(cmd, shell=True, check=True, stdout=subprocess.DEVNULL)  # external binaries dominate cost
+    subprocess.run(cmd, shell=True, check=True, stdout=subprocess.DEVNULL)
 
 
-def process_file(img_path: str, thb_path: str, ext: str):
-    if os.path.isfile(thb_path):
-        return False
+def process_file(img_path: str, thb_path: str, ext: str) -> int:
+    try:
+        if os.path.isfile(thb_path):
+            return 0
 
-    os.makedirs(os.path.dirname(thb_path), exist_ok=True)
+        os.makedirs(os.path.dirname(thb_path), exist_ok=True)
 
-    if is_video_ext(ext):
-        create_thumbnail_from_video(img_path, thb_path)
-    elif is_image_ext(ext):
-        create_thumbnail_from_image(img_path, thb_path)
-    else:
-        return False
+        if is_video_ext(ext):
+            create_thumbnail_from_video(img_path, thb_path)
+        elif is_image_ext(ext):
+            create_thumbnail_from_image(img_path, thb_path)
+        else:
+            return 0
 
-    return True
+        return 1
+    except Exception:
+        return 2
 
 
 def main():
@@ -73,6 +76,7 @@ def main():
     scanned = 0
     created = 0
     skipped = 0
+    errors = 0
 
     futures = set()
 
@@ -89,22 +93,36 @@ def main():
             if scanned % PRINT_PAGE_SIZE == 0:
                 done = [f for f in futures if f.done()]
                 for f in done:
-                    if f.result():
+                    r = f.result()
+                    if r == 1:
                         created += 1
-                    else:
+                    elif r == 0:
                         skipped += 1
+                    else:
+                        errors += 1
                     futures.remove(f)
 
-                print(f'\r({scanned}) created={created} skipped={skipped} pending={len(futures)}', end='', flush=True)
+                print(
+                    f'\r({scanned}) created={created} skipped={skipped} errors={errors} pending={len(futures)}',
+                    end='',
+                    flush=True
+                )
 
         for f in futures:
-            if f.result():
+            r = f.result()
+            if r == 1:
                 created += 1
-            else:
+            elif r == 0:
                 skipped += 1
+            else:
+                errors += 1
 
     print()
-    print(f'\rfinal: scanned={scanned} created={created} skipped={skipped}', end='', flush=True)
+    print(
+        f'\rfinal: scanned={scanned} created={created} skipped={skipped} errors={errors}',
+        end='',
+        flush=True
+    )
 
 
 if __name__ == '__main__':
