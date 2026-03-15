@@ -35,9 +35,8 @@ def get_valid_boards(db_path_ritual: str) -> list[str]:
         try:
             cur.execute(f'SELECT 1 FROM `{board}` LIMIT 1')
             valid.append(board)
-            print(f'  {board}: exists')
         except sqlite3.OperationalError:
-            print(f'  {board}: not found')
+            pass
     con.close()
     return valid
 
@@ -65,14 +64,14 @@ def migrate(boards: list[str], db_path_scanner: str, db_path_ritual: str, root_a
     ritual_cur = ritual_con.cursor()
 
     try:
-        scanner_cur.execute('SELECT COUNT(*) FROM hashtab')
+        scanner_cur.execute('select count(*) from hashtab')
         total_in_scanner = scanner_cur.fetchone()[0]
         print(f'total files in scanner: {total_in_scanner}')
 
-        scanner_cur.execute('SELECT filename_no_ext || "." || ext FROM hashtab JOIN extension USING (ext_id)')
+        scanner_cur.execute('select filename_no_ext || "." || ext from hashtab join extension using (ext_id)')
 
-        sutra_full_root = os.path.join(root_sutra, 'image')
-        sutra_thumb_root = os.path.join(root_sutra, 'thumb')
+        sutra_full_root = os.path.join(root_sutra, 'img')
+        sutra_thumb_root = os.path.join(root_sutra, 'thb')
 
         union_sql = build_union_sql(boards)
 
@@ -120,21 +119,21 @@ def migrate(boards: list[str], db_path_scanner: str, db_path_ritual: str, root_a
                 dst_full = os.path.join(sutra_full_root, dst_full_name[:2], dst_full_name[2:4], dst_full_name[4:6], dst_full_name)
                 dst_thumb = os.path.join(sutra_thumb_root, dst_thumb_name[:2], dst_thumb_name[2:4], dst_thumb_name[4:6], dst_thumb_name)
 
-                d = os.path.dirname(dst_full)
-                if d not in dir_cache:
-                    os.makedirs(d, exist_ok=True)
-                    dir_cache.add(d)
-
-                d = os.path.dirname(dst_thumb)
-                if d not in dir_cache:
-                    os.makedirs(d, exist_ok=True)
-                    dir_cache.add(d)
-
                 if os.path.exists(src_full):
+                    d = os.path.dirname(dst_full)
+                    if d not in dir_cache:
+                        os.makedirs(d, exist_ok=True)
+                        dir_cache.add(d)
+
                     os.replace(src_full, dst_full)
                     moved += 1
 
                 if os.path.exists(src_thumb):
+                    d = os.path.dirname(dst_thumb)
+                    if d not in dir_cache:
+                        os.makedirs(d, exist_ok=True)
+                        dir_cache.add(d)
+
                     os.replace(src_thumb, dst_thumb)
 
                 if moved % 1000 == 0 and moved:
@@ -151,9 +150,9 @@ def migrate(boards: list[str], db_path_scanner: str, db_path_ritual: str, root_a
 
 
 if __name__ == '__main__':
-    db_path_ritual = '/home/dolphin/Documents/code/ritual/ritual.db'
+    db_path_ritual = '/home/dolphin/Downloads/ritual_backup.db'
     db_path_scanner='/home/dolphin/Documents/code/ritual/scanner/scanner.db'
-    root_asagi='/home/dolphin/Documents/code/ritual/media_asagi'
+    root_asagi='/home/dolphin/Documents/code/ritual/media'
     root_sutra='/home/dolphin/Documents/code/ritual/media_sutra'
     
     print('Checking which boards exist in ritual database...')

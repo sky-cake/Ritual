@@ -98,10 +98,10 @@ def get_media_fp(fetcher: Fetcher, db: RitualDb) -> MediaFP:
 def main():
     Init()
     db = create_ritual_db()
-    media_fp = get_media_fp(fetcher, db)
     loop = Loop()
     state = State(loop)
     fetcher = Fetcher(state)
+    media_fp = get_media_fp(fetcher, db)
 
     critical_error_count = 0
     board = ''

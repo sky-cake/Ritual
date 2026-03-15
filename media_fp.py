@@ -218,7 +218,7 @@ class AsagiMediaFP(MediaFP):
         dirpath = os.path.join(
             self.media_save_path,
             board,
-            media_type.value,
+            'image' if media_type == MediaType.full_media else 'thumb',
             filename[:4],
             filename[4:6],
         )
@@ -241,7 +241,7 @@ class SutraMediaFP(MediaFP):
 
         dirpath = os.path.join(
             self.media_save_path,
-            media_type.value,
+            'img' if media_type == MediaType.full_media else 'thb',
             filename[:2],
             filename[2:4],
             filename[4:6],
