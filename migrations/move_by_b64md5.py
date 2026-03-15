@@ -36,6 +36,8 @@ def main():
     count_print = 0
     print_page_size = 5000
 
+    dir_cache = set()
+
     for dirpath, filename_no_ext, ext in iter_media_files(src_root_path, skip_dirnames=skip_dirnames, valid_exts=exts):
         src_img = os.path.join(dirpath, f'{filename_no_ext}.{ext}')
         src_thb = os.path.join(dirpath.replace('image', 'thumb'), f'{filename_no_ext}s.jpg')
@@ -46,8 +48,15 @@ def main():
         dst_img = os.path.join(dst_root_path, 'img', md5[:2], md5[2:4], md5[4:6], f'{md5}.{ext}')
         dst_thb = os.path.join(dst_root_path, 'thb', md5[:2], md5[2:4], md5[4:6], f'{md5}.jpg')
 
-        os.makedirs(os.path.dirname(dst_img), exist_ok=True)
-        os.makedirs(os.path.dirname(dst_thb), exist_ok=True)
+        d = os.path.dirname(dst_img)
+        if d not in dir_cache:
+            os.makedirs(d, exist_ok=True)
+            dir_cache.add(d)
+
+        d = os.path.dirname(dst_thb)
+        if d not in dir_cache:
+            os.makedirs(d, exist_ok=True)
+            dir_cache.add(d)
 
         if not os.path.isfile(dst_img):
             os.replace(src_img, dst_img)
