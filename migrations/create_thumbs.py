@@ -13,16 +13,16 @@ MAX_PENDING_FUTURES = MAX_WORKERS * 3
 
 
 def iter_media_files(root_path: str, skip_dirnames: set[str] | None = None, valid_exts: set[str] | None = None):
-    valid_exts = valid_exts or MEDIA_EXTS
     for dirpath, dirnames, filenames in os.walk(root_path):
-        if skip_dirnames:
-            dirnames[:] = [d for d in dirnames if d not in skip_dirnames]
-        for fname in filenames:
-            if '.' not in fname:
-                continue
-            base, ext = fname.rsplit('.', 1)
-            if ext.lower() in valid_exts:
-                yield dirpath, base, ext
+        dirname = os.path.basename(dirpath)
+        if skip_dirnames and dirname in skip_dirnames:
+            dirnames[:] = []
+            continue
+        for filename in filenames:
+            if '.' in filename:
+                filename_no_ext, ext = filename.rsplit('.', maxsplit=1)
+                if valid_exts and ext.lower() in valid_exts:
+                    yield dirpath, filename_no_ext, ext
 
 
 @lru_cache(maxsize=64)
@@ -75,7 +75,9 @@ def main():
     futures = set()
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-        for img_path, base, ext in iter_media_files(img_root):
+        for dirpath, filename_no_ext, ext in iter_media_files(img_root):
+
+            img_path = os.path.join(dirpath, f'{filename_no_ext}.{ext}')
 
             rel = os.path.relpath(img_path, img_root)
             thb_rel = rel.rsplit('.', 1)[0] + '.jpg'
