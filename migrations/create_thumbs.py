@@ -41,12 +41,24 @@ def is_image_ext(ext: str) -> bool:
 
 def create_thumbnail_from_video(video_path: str, out_path: str, width: int = 400, height: int = 400, quality: int = 25):
     cmd = f'ffmpeg -hide_banner -loglevel error -ss 0 -i "{video_path}" -pix_fmt yuvj420p -q:v 2 -frames:v 1 -f image2pipe - | convert - -resize {width}x{height} -quality {quality} "{out_path}"'
-    subprocess.run(cmd, shell=True, check=True, stdout=subprocess.DEVNULL)
+    subprocess.run(
+        cmd,
+        shell=True,
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL  # suppress tools that mess with terminal state
+    )
 
 
 def create_thumbnail_from_image(image_path: str, out_path: str, width: int = 400, height: int = 400, quality: int = 25):
     cmd = f'convert "{image_path}" -resize {width}x{height} -quality {quality} "{out_path}"'
-    subprocess.run(cmd, shell=True, check=True, stdout=subprocess.DEVNULL)
+    subprocess.run(
+        cmd,
+        shell=True,
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
 
 
 def process_file(img_path: str, thb_path: str, ext: str) -> int:
@@ -92,14 +104,20 @@ def main():
 
             if scanned % PRINT_PAGE_SIZE == 0:
                 done = [f for f in futures if f.done()]
+
                 for f in done:
-                    r = f.result()
+                    try:
+                        r = f.result()
+                    except Exception:
+                        r = 2
+
                     if r == 1:
                         created += 1
                     elif r == 0:
                         skipped += 1
                     else:
                         errors += 1
+
                     futures.remove(f)
 
                 print(
@@ -109,7 +127,11 @@ def main():
                 )
 
         for f in futures:
-            r = f.result()
+            try:
+                r = f.result()
+            except Exception:
+                r = 2
+
             if r == 1:
                 created += 1
             elif r == 0:
@@ -119,8 +141,7 @@ def main():
 
     print()
     print(
-        f'\rfinal: scanned={scanned} created={created} skipped={skipped} errors={errors}',
-        end='',
+        f'final: scanned={scanned} created={created} skipped={skipped} errors={errors}',
         flush=True
     )
 
