@@ -8,8 +8,8 @@ VIDEO_EXTS = {'mp4', 'webm'}
 MEDIA_EXTS = IMAGE_EXTS | VIDEO_EXTS
 
 PRINT_PAGE_SIZE = 5000
-MAX_WORKERS = 32
-MAX_PENDING_FUTURES = 100  # cap to avoid huge memory usage
+MAX_WORKERS = 3
+MAX_PENDING_FUTURES = MAX_WORKERS * 3
 
 
 def iter_media_files(root_path: str):
@@ -85,7 +85,13 @@ def main():
             thb_rel = rel.rsplit('.', 1)[0] + '.jpg'
             thb_path = os.path.join(thb_root, thb_rel)
 
-            # Wait if too many pending futures
+            if os.path.isfile(thb_path):
+                skipped += 1
+                scanned += 1
+                if scanned < 10:
+                    print(img_path, thb_path, ext)
+                continue
+
             while len(futures) >= MAX_PENDING_FUTURES:
                 done, _ = wait(futures, return_when=FIRST_COMPLETED)
                 for f in done:
@@ -95,8 +101,6 @@ def main():
                         r = 2
                     if r == 1:
                         created += 1
-                    elif r == 0:
-                        skipped += 1
                     else:
                         errors += 1
                     futures.remove(f)
@@ -106,20 +110,7 @@ def main():
 
             if scanned % PRINT_PAGE_SIZE == 0:
                 print(f'\r({scanned}) created={created} skipped={skipped} errors={errors} pending={len(futures)}', end='', flush=True)
-
-        # Wait for remaining futures
-        for f in futures:
-            try:
-                r = f.result()
-            except Exception:
-                r = 2
-            if r == 1:
-                created += 1
-            elif r == 0:
-                skipped += 1
-            else:
-                errors += 1
-
+    
     print()
     print(f'final: scanned={scanned} created={created} skipped={skipped} errors={errors}', flush=True)
 
