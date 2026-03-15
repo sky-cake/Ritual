@@ -10,11 +10,21 @@ So now the hard links should be removed, leaving a purely de-duplicated root med
     1. fclones group /path/to/root/media --match-links > dups_ml.txt
         - treats all linked files as duplicates
         - https://github.com/pkolaczk/fclones?tab=readme-ov-file#handling-links
-    2. fclones remove --priority newest < dupes.txt
+    2. fclones remove --priority newest < dups_ml.txt
         - remove the newest replicas. The olders files are less likely to be maliciously md5 overwritten
         - https://github.com/pkolaczk/fclones?tab=readme-ov-file#removing-files
 
-Once that is done, this script should migrates from `media_fp.AsagiMediaFP` to `media_fp.SutraMediaFP`.
+Once that is done, configure and run scanner.py (comment out gather_metadata()).
+    - it creates a sqlite database used for the next step
+
+Once that is done, configure and run asag_to_sutra.py (this script)
+    - migrates from `media_fp.AsagiMediaFP` to `media_fp.SutraMediaFP`.
+
+If there are still files remaining in the asagi directory, you can investigate the remaining files by running scanner.py again (with a new db)
+
+If you want to move remaining files to the new dir based on their computed media hash, configure and run move_by_b64md5.py
+
+At this point, what you do it up to you. I have no more suggestions.
 """
 
 

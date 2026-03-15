@@ -34,16 +34,16 @@ media_save_path = make_path('media')
 
 ## Sutra ##
 # Saves media to filepaths like,
-# - full media: `<media_save_path>/img/md5[:2]/md5[2:4]/md5[4:6]/md5.ext/md5<ext>`
-# - thumbnail: `<media_save_path>/thb/md5[:2]/md5[2:4]/md5[4:6]/md5.ext/md5.jpg`
-# Where md5 are API-reported md5 values, with `+` and `/` replaced by `-` and `_` for filesystem safety.
+# - full media: `<media_save_path>/img/media_hash[:2]/media_hash[2:4]/media_hash[4:6]/media_hash<ext>`
+# - thumbnail:  `<media_save_path>/thb/media_hash[:2]/media_hash[2:4]/media_hash[4:6]/media_hash.jpg`
+# Where media_hash are API-reported media_hash values, with `+` and `/` replaced by `-` and `_` for filesystem safety.
 # This is new to the image board archiving world, and it avoids downloading and saving duplicates files to our filesystem
 
 
 ## Asagi ##
 # Saves media to filepaths like,
 # - full media: `<media_save_path>/<board>/image/tim[:4]/tim[4:6]/tim<ext>`
-# - thumbnail: `<media_save_path>/<board>/thumb/tim[:4]/tim[4:6]/tim<s.jpg>`
+# - thumbnail:  `<media_save_path>/<board>/thumb/tim[:4]/tim[4:6]/tim<s.jpg>`
 # This is legacy and does not avoid duplicate files being downloaded and saved
 # Duplicate files can be replace with hardlinks or softlinks with the tool https://github.com/pkolaczk/fclones
 #   For ****example****,
