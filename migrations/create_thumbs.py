@@ -12,22 +12,17 @@ MAX_WORKERS = 3
 MAX_PENDING_FUTURES = MAX_WORKERS * 3
 
 
-def iter_media_files(root_path: str):
-    stack = [root_path]
-    while stack:
-        path = stack.pop()
-        with os.scandir(path) as it:
-            for entry in it:
-                if entry.is_dir():
-                    stack.append(entry.path)
-                    continue
-                name = entry.name
-                if '.' not in name:
-                    continue
-                base, ext = name.rsplit('.', 1)
-                ext = ext.lower()
-                if ext in MEDIA_EXTS:
-                    yield entry.path, base, ext
+def iter_media_files(root_path: str, skip_dirnames: set[str] | None = None, valid_exts: set[str] | None = None):
+    valid_exts = valid_exts or MEDIA_EXTS
+    for dirpath, dirnames, filenames in os.walk(root_path):
+        if skip_dirnames:
+            dirnames[:] = [d for d in dirnames if d not in skip_dirnames]
+        for fname in filenames:
+            if '.' not in fname:
+                continue
+            base, ext = fname.rsplit('.', 1)
+            if ext.lower() in valid_exts:
+                yield dirpath, base, ext
 
 
 @lru_cache(maxsize=64)
