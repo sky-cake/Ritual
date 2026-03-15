@@ -75,6 +75,7 @@ def main():
     created = 0
     skipped = 0
     errors = 0
+    page_count = 0
 
     futures = set()
 
@@ -88,6 +89,10 @@ def main():
             if os.path.isfile(thb_path):
                 skipped += 1
                 scanned += 1
+                page_count += 1
+                if page_count >= PRINT_PAGE_SIZE:
+                    page_count = 0
+                    print(f'\r({scanned}) created={created} skipped={skipped} errors={errors} pending={len(futures)}', end='', flush=True)
                 continue
 
             while len(futures) >= MAX_PENDING_FUTURES:
@@ -105,8 +110,10 @@ def main():
 
             futures.add(pool.submit(process_file, img_path, thb_path, ext))
             scanned += 1
+            page_count += 1
 
-            if scanned % PRINT_PAGE_SIZE == 0:
+            if page_count >= PRINT_PAGE_SIZE:
+                page_count = 0
                 print(f'\r({scanned}) created={created} skipped={skipped} errors={errors} pending={len(futures)}', end='', flush=True)
     
     print()
