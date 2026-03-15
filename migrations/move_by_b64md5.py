@@ -38,7 +38,7 @@ def main():
 
     for dirpath, filename_no_ext, ext in iter_media_files(src_root_path, skip_dirnames=skip_dirnames, valid_exts=exts):
         src_img = os.path.join(dirpath, f'{filename_no_ext}.{ext}')
-        src_thb = os.path.join(dirpath, f'{filename_no_ext}s.jpg')
+        src_thb = os.path.join(dirpath.replace('image', 'thumb'), f'{filename_no_ext}s.jpg')
 
         with open(src_img, 'rb') as f:
             md5 = get_md5_b64_hash(f.read())
