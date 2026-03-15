@@ -278,6 +278,8 @@ def assert_thumbnail_deps(logger: Logger):
     convert_path = subprocess.run(['which', 'convert'], capture_output=True, text=True).stdout.strip()
     logger.info(f'FFmpeg Path: {ffmpeg_path}')
     logger.info(f'Convert Path: {convert_path}')
+    if not ffmpeg_path or not convert_path:
+        raise ValueError(ffmpeg_path, convert_path)
 
 
 def make_path(*filepaths):

@@ -94,6 +94,7 @@ class MediaFP(ABC):
             if os.path.isfile(filepath):
                 dirpath_thumb, filename_thumb = self.get_dirpath_and_filename(board, MediaType.thumbnail, post)
                 filepath_thumb = os.path.join(dirpath_thumb, filename_thumb)
+                makedir_p(dirpath_thumb)
                 create_thumbnail(
                     post,
                     filepath,
