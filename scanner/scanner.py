@@ -3,6 +3,14 @@ from itertools import batched
 from functools import lru_cache
 import sqlite3
 import time
+import argparse
+
+
+def get_root_path_from_args() -> str:
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--root', required=True)
+    args = parser.parse_args()
+    return args.root
 
 
 def get_placeholders(l: list) -> str:
@@ -150,7 +158,7 @@ def iter_media_files_fast(root_path: str, valid_exts: set[str] | None=None):
 
 class ScannerConfig:
     db_path: str = make_path('scanner.db')
-    root_path: str = '/home/dolphin/Documents'
+    root_path: str = get_root_path_from_args() or '/mnt/dl'
     file_exts: str = 'jpeg,jpg,png,gif' # comma separated, no dot in .ext
 
     skip_dirnames: set[str] = set()
@@ -164,7 +172,9 @@ class ScannerConfig:
     ## End of configs - Do not touch ##
     ## End of configs - Do not touch ##
     file_exts: set[str] = set([e for e in file_exts.split(',')])
+    assert root_path
     assert os.path.isdir(root_path)
+    print(f'scanning: "{root_path}" for {file_exts}')
 
 
 def gather_filesystem(db: ScannerDb, conf: ScannerConfig, batch_size: int=5_000):
