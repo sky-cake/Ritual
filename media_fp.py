@@ -6,6 +6,7 @@ import configs
 from enums import MediaType
 from fetcher import Fetcher
 from db.ritual import RitualDb
+from scanner.scanner import ScannerDb
 from utils import (
     create_thumbnail,
     fetch_media_bytes,
@@ -32,10 +33,11 @@ def wrap_fetch_media_bytes(session: Session, url: str, ext: str) -> bytes | None
 
 
 class MediaFP(ABC):
-    def __init__(self, fetcher: Fetcher, media_save_path: str, ritual_db: RitualDb):
+    def __init__(self, fetcher: Fetcher, media_save_path: str, ritual_db: RitualDb, scanner_db: ScannerDb | None):
         self.fetcher = fetcher
         self.media_save_path = media_save_path
         self.ritual_db = ritual_db
+        self.scanner_db = scanner_db
         self.ritual_queue = []
 
 
@@ -152,6 +154,9 @@ class MediaFP(ABC):
 
         self.save(post, board, MediaType.full_media, content)
 
+        if configs.scanner_db_enabled and self.scanner_db:
+            self.scanner_db.insert_from_names(dirpath, filename, configs.deterministic_directory_mode)
+
         if post['md5']:
             media = f"{post.get('tim')}{post.get('ext')}"
             self.ritual_queue.append((post['md5'], media))
@@ -204,8 +209,8 @@ class MediaFP(ABC):
 
 
 class AsagiMediaFP(MediaFP):
-    def __init__(self, fetcher: Fetcher, media_save_path: str, ritual_db: RitualDb):
-        super().__init__(fetcher, media_save_path, ritual_db)
+    def __init__(self, fetcher: Fetcher, media_save_path: str, ritual_db: RitualDb, scanner_db: ScannerDb | None):
+        super().__init__(fetcher, media_save_path, ritual_db, scanner_db)
 
 
     def get_dirpath_and_filename(self, board: str, media_type: MediaType, post: dict) -> tuple[str, str]:
@@ -228,8 +233,8 @@ class AsagiMediaFP(MediaFP):
 
 
 class SutraMediaFP(MediaFP):
-    def __init__(self, fetcher: Fetcher, media_save_path: str, ritual_db: RitualDb):
-        super().__init__(fetcher, media_save_path, ritual_db)
+    def __init__(self, fetcher: Fetcher, media_save_path: str, ritual_db: RitualDb, scanner_db: ScannerDb | None):
+        super().__init__(fetcher, media_save_path, ritual_db, scanner_db)
 
 
     def get_dirpath_and_filename(self, board: str, media_type: MediaType, post: dict) -> tuple[str, str]:

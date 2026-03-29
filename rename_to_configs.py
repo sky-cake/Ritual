@@ -54,6 +54,24 @@ media_save_path = make_path('media')
 media_fp = 'asagi' # 'asagi' or 'sutra'
 
 
+
+## Scanner DB ##
+# For media_fp = 'sutra' or 'asagi', we can track the full media files we download in a sqlite database.
+# This is useful for quickly seeing which files you have, rather than scanning your filesystem frequently.
+scanner_db_enabled = False
+
+# By default, scanner.db is at ./scanner/scanner.db
+scanner_db_path = '' # '/path/to/scanner.db'
+
+# Avoid writing scanner.db directory table entries
+# Allows us to skip `dir_id` lookups and save db space
+# Should only be used with media_fp = 'sutra', and when you have all your archive media in one root path
+# Note: running this against the same directory in different modes will result in "duplicate" hashtab records (dir_id = int, None)
+# Called 'deterministic' because from hashtab records, we can create the absolute file path
+deterministic_directory_mode = True
+
+
+
 db_type = 'sqlite' # 'sqlite' or 'mysql'
 db_echo = False
 

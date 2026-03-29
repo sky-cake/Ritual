@@ -5,6 +5,7 @@ import configs
 from archive import Archive
 from catalog import Catalog
 from db.ritual import RitualDb, create_ritual_db
+from scanner.scanner import ScannerDb
 from fetcher import Fetcher
 from filter import Filter
 from loop import Loop
@@ -71,7 +72,7 @@ def process_board(board: str, db: RitualDb, fetcher: Fetcher, loop: Loop, state:
     loop.set_board_duration_minutes(board)
 
 
-def save_on_error(state: State, db: RitualDb, media_fp: MediaFP, board: str):
+def save_on_error(state: State, ritual_db: RitualDb, scanner_db: ScannerDb | None, media_fp: MediaFP, board: str):
     configs.logger.info('Saving State...')
     state.save()
     configs.logger.info('  Done')
@@ -81,34 +82,43 @@ def save_on_error(state: State, db: RitualDb, media_fp: MediaFP, board: str):
     configs.logger.info('  Done')
 
     configs.logger.info('Shutting down RitualDb...')
-    db.save_and_close()
+    ritual_db.save_and_close()
     configs.logger.info('  Done')
 
+    if scanner_db and scanner_db.conn:
+        configs.logger.info('Shutting down ScannerDb...')
+        scanner_db.conn.commit()
+        scanner_db.conn.close()
+        configs.logger.info('  Done')
 
-def get_media_fp(fetcher: Fetcher, db: RitualDb) -> MediaFP:
+
+def get_media_fp(fetcher: Fetcher, ritual_db: RitualDb, scanner_db: ScannerDb | None) -> MediaFP:
     if configs.media_fp == 'sutra':
-        return SutraMediaFP(fetcher, configs.media_save_path, db)
+        return SutraMediaFP(fetcher, configs.media_save_path, ritual_db, scanner_db)
 
     if configs.media_fp == 'asagi':
-        return AsagiMediaFP(fetcher, configs.media_save_path, db)
+        return AsagiMediaFP(fetcher, configs.media_save_path, ritual_db, scanner_db)
 
     raise ValueError(configs.media_fp)
 
 
 def main():
     Init()
-    db = create_ritual_db()
+    ritual_db = create_ritual_db()
     loop = Loop()
     state = State(loop)
     fetcher = Fetcher(state)
-    media_fp = get_media_fp(fetcher, db)
+
+    scanner_db = ScannerDb(configs.scanner_db_path) if configs.scanner_db_enabled else None
+
+    media_fp = get_media_fp(fetcher, ritual_db, scanner_db)
 
     critical_error_count = 0
     board = ''
     while True:
         try:
             for board in configs.boards:
-                process_board(board, db, fetcher, loop, state, media_fp)
+                process_board(board, ritual_db, fetcher, loop, state, media_fp)
 
             fetcher.sleep()
             state.save()
@@ -119,13 +129,13 @@ def main():
 
         except KeyboardInterrupt:
             configs.logger.info('Received interrupt signal')
-            save_on_error(state, db, media_fp, board)
+            save_on_error(state, ritual_db, scanner_db, media_fp, board)
             break
 
         except Exception as e:
             configs.logger.error(f'Critical error in main loop: {e}')
             configs.logger.error(traceback.format_exc())
-            save_on_error(state, db, media_fp, board)
+            save_on_error(state, ritual_db, scanner_db, media_fp, board)
             critical_error_count += 1
             n_critical_errors = 5
             if critical_error_count >= n_critical_errors:

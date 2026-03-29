@@ -8,7 +8,7 @@ import argparse
 
 def get_root_path_from_args() -> str:
     parser = argparse.ArgumentParser()
-    parser.add_argument('--root', required=True)
+    parser.add_argument('--root')
     args = parser.parse_args()
     return args.root
 
@@ -34,7 +34,10 @@ class SqliteDb:
 
 
 class ScannerDb(SqliteDb):
-    def __init__(self, db_path):
+    def __init__(self, db_path: str):
+        if not db_path:
+            db_path = make_path('scanner.db')
+            print(f'Using default ScannerDb.db_path: {db_path}')
         super().__init__(db_path)
 
     def init_db(self):
@@ -79,8 +82,23 @@ class ScannerDb(SqliteDb):
         self.conn.commit()
 
 
-    # don't expect many cache hits
-    @lru_cache(maxsize=4096)
+    def insert_from_names(self, dirname: str, filename: str, deterministic_directory_mode: bool):
+        self.connect()
+        sql_insert_hashtab = f'insert or ignore into hashtab (dir_id, filename_no_ext, ext_id, datetime_utc) values (?,?,?,{int(time.time())});'
+
+        dir_id = None
+        if not deterministic_directory_mode:
+            dir_id = self.get_dir_id(dirname)
+
+        filename_no_ext, ext = filename.rsplit('.', maxsplit=1)
+        ext_id = self.get_ext_id(ext)
+
+        self.conn.execute(sql_insert_hashtab, (dir_id, filename_no_ext, ext_id))
+        self.conn.commit()
+
+
+    # don't expect many cache hits, keep low
+    @lru_cache(maxsize=128)
     def get_dir_id(self, path: str) -> int:
         '''
         - dirpath has no trailing slash
@@ -157,7 +175,7 @@ def iter_media_files_fast(root_path: str, valid_exts: set[str] | None=None):
 
 
 class ScannerConfig:
-    db_path: str = make_path('scanner.db')
+    db_path: str = '' # default is ./scanner.db
     root_path: str = get_root_path_from_args() or '/mnt/dl'
     file_exts: str = 'jpeg,jpg,png,gif' # comma separated, no dot in .ext
 
@@ -165,16 +183,13 @@ class ScannerConfig:
 
     # directories can be created from columns in the `image` table
     # allows us to skip `dir_id` lookups
-    # Note: running this against the save directory in different modes will result in "duplicate" hashtab records (dir_id = int, None)
+    # Note: running this against the same directory in different modes will result in "duplicate" hashtab records (dir_id = int, None)
     deterministic_directory_mode: bool = True # True, False
 
     ## End of configs - Do not touch ##
     ## End of configs - Do not touch ##
     ## End of configs - Do not touch ##
     file_exts: set[str] = set([e for e in file_exts.split(',')])
-    assert root_path
-    assert os.path.isdir(root_path)
-    print(f'scanning: "{root_path}" for {file_exts}')
 
 
 def gather_filesystem(db: ScannerDb, conf: ScannerConfig, batch_size: int=5_000):
@@ -212,6 +227,11 @@ def gather_filesystem(db: ScannerDb, conf: ScannerConfig, batch_size: int=5_000)
 
 if __name__ == '__main__':
     conf = ScannerConfig()
+
+    assert conf.root_path
+    assert os.path.isdir(conf.root_path), conf.root_path
+    print(f'scanning: "{conf.root_path}" for {conf.file_exts}')
+
     db = None
     try:
         db = ScannerDb(conf.db_path)
