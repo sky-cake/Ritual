@@ -1,112 +1,212 @@
 import os
-import sys
 from itertools import batched
-
-from configs import Config
-from db_scanner import ScannerDb
-from file_meta_extract import get_md5_b64
-from progress import Counter
-from utils import iter_media_files
+from functools import lru_cache
+import sqlite3
 
 
-def gather_filesystem(root_path: str, db: ScannerDb, skip_dirnames: set[str], exts: set[str], batch_size: int):
+def get_placeholders(l: list) -> str:
+    if len(l) < 1:
+        raise ValueError(l)
+    return ','.join(['?'] * len(l))
+
+
+class SqliteDb:
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        self.conn: sqlite3.Connection | None = None
+
+    def connect(self):
+        if self.conn is None:
+            self.conn = sqlite3.connect(self.db_path)
+        self.conn.execute('pragma journal_mode=wal;')
+        self.conn.execute('pragma synchronous=normal;')
+        self.conn.execute('pragma temp_store=memory;')
+
+    def close(self):
+        self.conn.commit()
+        self.conn.close()
+
+
+class ScannerDb(SqliteDb):
+    def __init__(self, db_path):
+        super().__init__(db_path)
+
+    def init_db(self):
+        sqls = '''
+        pragma journal_mode=wal;;
+        pragma synchronous=normal;;
+        pragma temp_store=memory;;
+
+        create table if not exists directory (
+            dir_id integer primary key,
+            dirpath text unique             -- No trailing slash. Absolute path.
+        );;
+
+        create table if not exists extension (
+            ext_id integer primary key,
+            ext text unique                 -- No leading dot. Case sensitive.
+        );;
+
+        create table if not exists hashtab (
+            dir_id           integer,
+            filename_no_ext  text,
+            ext_id           integer,
+            md5              text,          -- api reported b64(md5 hash) value
+            md5_computed     text,          -- our computed b64(md5 hash) against the downloaded file
+            fsize            text,          -- api reported file size in bytes
+            fsize_computed   integer,       -- our computed file size in bytes
+
+            unique (dir_id, filename_no_ext, ext_id)
+        );;
+
+        create index if not exists idx_hashtab_md5             on hashtab (md5);;
+        create index if not exists idx_hashtab_md5_computed    on hashtab (md5_computed);;
+        create index if not exists idx_hashtab_filename_no_ext on hashtab (filename_no_ext);;
+        '''
+
+        for sql in sqls.split(';;'):
+            if sql.strip():
+                self.conn.execute(sql)
+
+        self.conn.commit()
+
+
+    # don't expect many cache hits
+    @lru_cache(maxsize=4096)
+    def get_dir_id(self, path: str) -> int:
+        '''
+        - dirpath has no trailing slash
+        - dirpath is the absolute path
+        '''
+        result = self.conn.execute('insert or ignore into directory (dirpath) values (?)', (path,)).fetchall()
+        if result:
+            return result[0][0]
+        return self.conn.execute('select dir_id from directory where dirpath=?', (path,)).fetchall()[0][0]
+
+
+    # case sensitive
+    # png jpeg jpg gif, N=4 extensions
+    # png Png pNg pnG PNg pNG PnG PNG, M=3 extension length for png, 2^M combinations
+    # summing all combinations, 8 + 16 + 8 + 8 = 40
+    # let's assume a few extra valid image extensions
+    # round up to 1024 because why not
+    @lru_cache(maxsize=1024)
+    def get_ext_id(self, ext: str) -> int:
+        '''
+        - ext has no leading dot
+        - ext is case sensitive
+        '''
+        result = self.conn.execute('insert or ignore into extension (ext) values (?)', (ext,)).fetchall()
+        if result:
+            return result[0][0]
+        return self.conn.execute('select ext_id from extension where ext=?', (ext,)).fetchall()[0][0]
+
+
+class Counter:
+    def __init__(self, name: str, stdout_every: int):
+        self.name = name
+        self.count = 0
+        self.sub_counter = 0
+        self.stdout_every = stdout_every
+
+    def __call__(self, increment_by: int=1):
+        self.count += increment_by
+        self.sub_counter += increment_by
+        if self.sub_counter >= self.stdout_every:
+            self.sub_counter = 0
+            print(f'\r{self.name}: {self.count:,}', end='', flush=True)
+
+
+def make_path(*args) -> str:
+    d = os.path.dirname(os.path.realpath(__file__))
+    return os.path.join(d, *args)
+
+
+def iter_media_files(root_path: str, skip_dirnames: set[str] | None=None, valid_exts: set[str] | None=None):
+    for dirpath, dirnames, filenames in os.walk(root_path):
+        dirname = os.path.basename(dirpath)
+        if skip_dirnames and dirname in skip_dirnames:
+            dirnames[:] = []
+            continue
+        for filename in filenames:
+            if '.' in filename:
+                filename_no_ext, ext = filename.rsplit('.', maxsplit=1)
+                if valid_exts and ext.lower() in valid_exts:
+                    yield dirpath, filename_no_ext, ext
+
+
+def iter_media_files_fast(root_path: str, valid_exts: set[str] | None=None):
+    '''
+    - deterministic_directory_mode
+    - removed skip_dirnames
+    '''
+    for dirpath, dirnames, filenames in os.walk(root_path):
+        for filename in filenames:
+            if '.' in filename:
+                filename_no_ext, ext = filename.rsplit('.', maxsplit=1)
+                if valid_exts and ext.lower() in valid_exts:
+                    yield filename_no_ext, ext
+
+
+class ScannerConfig:
+    db_path: str = make_path('scanner.db')
+    root_path: str = '/home/dolphin/Documents'
+    file_exts: str = 'jpeg,jpg,png,gif' # comma separated, no dot in .ext
+
+    skip_dirnames: set[str] = set()
+
+    # directories can be created from columns in the `image` table
+    # allows us to skip `dir_id` lookups
+    # Note: running this against the save directory in different modes will result in "duplicate" hashtab records (dir_id = int, None)
+    deterministic_directory_mode: bool = True # True, False
+
+    ## End of configs - Do not touch ##
+    ## End of configs - Do not touch ##
+    ## End of configs - Do not touch ##
+    file_exts: set[str] = set([e for e in file_exts.split(',')])
+
+
+def gather_filesystem(db: ScannerDb, conf: ScannerConfig, batch_size: int=20_000):
     """
     Crawls a root path recursively, creating entries of existing files in the sql table `hashtab`.
     """
     counter = Counter('catalog_filesystem', batch_size)
 
-    dir_cache = db.fetch_dir_map()
-    ext_cache = db.fetch_ext_map()
+    sql_insert_hashtab = 'insert or ignore into hashtab (dir_id, filename_no_ext, ext_id) values (?,?,?);'
 
-    sql_insert_hashtab = '''
-        insert or ignore into hashtab (dir_id, filename_no_ext, ext_id)
-        values (?,?,?);
-    '''
+    iter_media_func = iter_media_files
+    if not conf.skip_dirnames and conf.deterministic_directory_mode:
+        iter_media_func = iter_media_files_fast
+        dir_id = None
 
-    for batch in batched(iter_media_files(root_path, skip_dirnames=skip_dirnames, valid_exts=exts), batch_size):
+    for batch in batched(iter_media_func(conf.root_path, valid_exts=conf.file_exts), batch_size):
         params = []
-        for dirpath, filename_no_ext, ext in batch:
-            dir_id = db.get_and_set_dir_id(dir_cache, dirpath)
-            ext_id = db.get_and_set_ext_id(ext_cache, ext)
+        for item in batch:
+            if not conf.deterministic_directory_mode:
+                dirpath, filename_no_ext, ext = item
+                dir_id = db.get_dir_id(dirpath)
+            else:
+                filename_no_ext, ext = item
+
+            ext_id = db.get_ext_id(ext)
             params.append((dir_id, filename_no_ext, ext_id))
 
-        db.run_query_many(sql_insert_hashtab, params=params, commit=True)
+        db.conn.executemany(sql_insert_hashtab, params)
+        db.conn.commit()
         counter(increment_by=len(batch))
 
     print('\ncatalog_filesystem, completed')
 
 
-def gather_metadata(db: ScannerDb, batch_size: int):
-    counter = Counter('gather_metadata', batch_size)
-
-    missing_meta_file_count = int(db.run_query_tuple('select count(*) from hashtab where md5_computed is null and is_saved is null;')[0][0])
-    if missing_meta_file_count == 0:
-        print('Nothing to do - all files have had their metadata gathered already.')
-        return
-
-    print(f'Starting to gather metadata for ({missing_meta_file_count}) files...')
-
-    sql_select = f'''
-    select
-        h.rowid,
-        d.dirpath,
-        h.filename_no_ext,
-        e.ext
-    from hashtab h
-        join directory d using (dir_id)
-        join extension e using (ext_id)
-    where
-        h.md5_computed is null and is_saved is null
-    limit {int(batch_size)};
-    '''
-
-    sql_update = '''update hashtab set md5_computed = ?, fsize_computed = ?, is_saved = ? where rowid = ?'''
-
-    while True:
-        rows = db.run_query_tuple(sql_select)
-        if not rows:
-            break
-
-        params = []
-        for rowid, dirpath, filename_no_ext, ext in rows:
-            fullpath = os.path.join(dirpath, f'{filename_no_ext}.{ext}')
-
-            # file could have been deleted since the gather_filesystem()'s last run
-            if not os.path.isfile(fullpath):
-                is_saved = 0
-                md5_computed = None
-                fsize_computed = None
-            else:
-                is_saved = 1
-                md5_computed = get_md5_b64(fullpath)
-                fsize_computed = os.path.getsize(fullpath)
-
-            params.append((
-                md5_computed,
-                fsize_computed,
-                is_saved,
-                rowid,
-            ))
-
-        db.run_query_many(sql_update, params=params, commit=True)
-        counter(increment_by=len(rows))
-    print('\ngather_metadata, completed')
-
-
 if __name__ == '__main__':
-    config = Config()
+    conf = ScannerConfig()
+    db = None
     try:
-        config.print_and_verify()
-        print('Running...')
-    except AssertionError:
-        print('Exiting...')
-        sys.exit(0)
-
-    db = ScannerDb(config.db_path)
-    db.init_db()
-
-    gather_filesystem(config.root_path, db, config.skip_dirnames, config.file_exts, config.gather_filesystem_batch_size)
-
-    gather_metadata(db, config.gather_metadata_batch_size)
-
-    db.save_and_close()
+        db = ScannerDb(conf.db_path)
+        db.connect()
+        db.init_db()
+        gather_filesystem(db, conf)
+    finally:
+        if db:
+            db.conn.commit()
+            db.conn.close()
