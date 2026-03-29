@@ -2,6 +2,7 @@ import os
 from itertools import batched
 from functools import lru_cache
 import sqlite3
+import time
 
 
 def get_placeholders(l: list) -> str:
@@ -18,9 +19,6 @@ class SqliteDb:
     def connect(self):
         if self.conn is None:
             self.conn = sqlite3.connect(self.db_path)
-        self.conn.execute('pragma journal_mode=wal;')
-        self.conn.execute('pragma synchronous=normal;')
-        self.conn.execute('pragma temp_store=memory;')
 
     def close(self):
         self.conn.commit()
@@ -55,6 +53,8 @@ class ScannerDb(SqliteDb):
             md5_computed     text,          -- our computed b64(md5 hash) against the downloaded file
             fsize            text,          -- api reported file size in bytes
             fsize_computed   integer,       -- our computed file size in bytes
+
+            datetime_utc integer,
 
             unique (dir_id, filename_no_ext, ext_id)
         );;
@@ -164,15 +164,17 @@ class ScannerConfig:
     ## End of configs - Do not touch ##
     ## End of configs - Do not touch ##
     file_exts: set[str] = set([e for e in file_exts.split(',')])
+    assert os.path.isdir(root_path)
 
 
-def gather_filesystem(db: ScannerDb, conf: ScannerConfig, batch_size: int=20_000):
+def gather_filesystem(db: ScannerDb, conf: ScannerConfig, batch_size: int=5_000):
     """
     Crawls a root path recursively, creating entries of existing files in the sql table `hashtab`.
     """
     counter = Counter('catalog_filesystem', batch_size)
 
-    sql_insert_hashtab = 'insert or ignore into hashtab (dir_id, filename_no_ext, ext_id) values (?,?,?);'
+    datetime_utc = int(time.time())
+    sql_insert_hashtab = f'insert or ignore into hashtab (dir_id, filename_no_ext, ext_id, datetime_utc) values (?,?,?,{datetime_utc});'
 
     iter_media_func = iter_media_files
     if not conf.skip_dirnames and conf.deterministic_directory_mode:
