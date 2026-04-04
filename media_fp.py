@@ -155,7 +155,7 @@ class MediaFP(ABC):
         self.save(post, board, MediaType.full_media, content)
 
         if configs.scanner_db_enabled and self.scanner_db:
-            self.scanner_db.insert_from_names(dirpath, filename, configs.deterministic_directory_mode)
+            self.scanner_db.insert_from_names(dirpath, filename, configs.save_directories_in_db)
 
         if post['md5']:
             media = f"{post.get('tim')}{post.get('ext')}"

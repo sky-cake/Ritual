@@ -63,12 +63,8 @@ scanner_db_enabled = False
 # By default, scanner.db is at ./scanner/scanner.db
 scanner_db_path = '' # '/path/to/scanner.db'
 
-# Avoid writing scanner.db directory table entries
-# Allows us to skip `dir_id` lookups and save db space
-# Should only be used with media_fp = 'sutra', and when you have all your archive media in one root path
-# Note: running this against the same directory in different modes will result in "duplicate" hashtab records (dir_id = int, None)
-# Called 'deterministic' because from hashtab records, we can create the absolute file path
-deterministic_directory_mode = True
+# if you only have one root directory, and your use Sutra, set this to False
+save_directories_in_db = False
 
 
 

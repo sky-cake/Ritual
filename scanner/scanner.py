@@ -57,9 +57,12 @@ class ScannerDb(SqliteDb):
         );;
 
         create table if not exists hashtab (
+            image_id integer primary key autoincrement,
+
             dir_id           integer,
             filename_no_ext  text,
             ext_id           integer,
+
             md5              text,          -- api reported b64(md5 hash) value
             md5_computed     text,          -- our computed b64(md5 hash) against the downloaded file
             fsize            text,          -- api reported file size in bytes
@@ -82,12 +85,12 @@ class ScannerDb(SqliteDb):
         self.conn.commit()
 
 
-    def insert_from_names(self, dirname: str, filename: str, deterministic_directory_mode: bool):
+    def insert_from_names(self, dirname: str, filename: str, save_directories_in_db: bool):
         self.connect()
         sql_insert_hashtab = f'insert or ignore into hashtab (dir_id, filename_no_ext, ext_id, datetime_utc) values (?,?,?,{int(time.time())});'
 
-        dir_id = None
-        if not deterministic_directory_mode:
+        dir_id = 0
+        if save_directories_in_db:
             dir_id = self.get_dir_id(dirname)
 
         filename_no_ext, ext = filename.rsplit('.', maxsplit=1)
@@ -163,7 +166,7 @@ def iter_media_files(root_path: str, skip_dirnames: set[str] | None=None, valid_
 
 def iter_media_files_fast(root_path: str, valid_exts: set[str] | None=None):
     '''
-    - deterministic_directory_mode
+    - save_directories_in_db = False
     - removed skip_dirnames
     '''
     for dirpath, dirnames, filenames in os.walk(root_path):
@@ -184,7 +187,7 @@ class ScannerConfig:
     # directories can be created from columns in the `image` table
     # allows us to skip `dir_id` lookups
     # Note: running this against the same directory in different modes will result in "duplicate" hashtab records (dir_id = int, None)
-    deterministic_directory_mode: bool = True # True, False
+    save_directories_in_db: bool = False # True, False
 
     ## End of configs - Do not touch ##
     ## End of configs - Do not touch ##
@@ -202,14 +205,14 @@ def gather_filesystem(db: ScannerDb, conf: ScannerConfig, batch_size: int=5_000)
     sql_insert_hashtab = f'insert or ignore into hashtab (dir_id, filename_no_ext, ext_id, datetime_utc) values (?,?,?,{datetime_utc});'
 
     iter_media_func = iter_media_files
-    if not conf.skip_dirnames and conf.deterministic_directory_mode:
+    if not conf.skip_dirnames and not conf.save_directories_in_db:
         iter_media_func = iter_media_files_fast
-        dir_id = None
+        dir_id = 0
 
     for batch in batched(iter_media_func(conf.root_path, valid_exts=conf.file_exts), batch_size):
         params = []
         for item in batch:
-            if not conf.deterministic_directory_mode:
+            if conf.save_directories_in_db:
                 dirpath, filename_no_ext, ext = item
                 dir_id = db.get_dir_id(dirpath)
             else:
