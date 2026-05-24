@@ -36,9 +36,6 @@ class Init:
 
         configs.boards_with_archive = load_boards_with_archive(boards_json)
 
-        if not configs.boards_with_archive:
-            raise ValueError(configs.boards_with_archive)
-
         configs.logger.info(f'{len(configs.boards_with_archive)} boards have archive support')
 
 

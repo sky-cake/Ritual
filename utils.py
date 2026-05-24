@@ -149,6 +149,16 @@ def create_thumbnail(post: dict, full_path: str, thumb_path: str, logger=None):
         return
 
 
+def get_media_filename(post: dict, unescape_data_b4_db_write: bool) -> str | None:
+    if post.get('ext') == 'deleted':
+        return
+
+    if post.get('filename') and post.get('ext'):
+        if unescape_data_b4_db_write:
+            return html.unescape(f"{post.get('filename')}{post.get('ext')}")
+        return f"{post.get('filename')}{post.get('ext')}"
+
+
 def get_d_board(post: dict, media_id: int | None = None, unescape_data_b4_db_write: bool=True):
     return {
         # 'doc_id': post.get('doc_id'), # autoincremented
@@ -163,7 +173,7 @@ def get_d_board(post: dict, media_id: int | None = None, unescape_data_b4_db_wri
         'preview_orig': get_asagi_value_preview(post),
         'preview_w': post.get('tn_w', 0),
         'preview_h': post.get('tn_h', 0),
-        'media_filename': html.unescape(f"{post.get('filename')}{post.get('ext')}") if post.get('filename') and post.get('ext') and unescape_data_b4_db_write else None,
+        'media_filename': get_media_filename(post, unescape_data_b4_db_write),
         'media_w': post.get('w', 0),
         'media_h': post.get('h', 0),
         'media_size': post.get('fsize', 0),
@@ -211,11 +221,13 @@ PositiveInt = Annotated[int, msgspec.Meta(gt=0)]
 NonNegativeInt = Annotated[int, msgspec.Meta(ge=0)]
 ZeroOrOne = Annotated[int, msgspec.Meta(ge=0, le=1)]
 
-ExtLiteral = Literal['.jpg', '.png', '.gif', '.pdf', '.swf', '.webm', '.mp4']
-CapcodeLiteral = Literal['mod', 'admin', 'admin_highlight', 'manager', 'developer', 'founder']
+MultiplyMediaTim = Annotated[str, msgspec.Meta(pattern=r'^$|^\d+(?:-\d+)?$')]
 
-ShortStr = Annotated[str, msgspec.Meta(min_length=0, max_length=512)]
-LongStr = Annotated[str, msgspec.Meta(min_length=0, max_length=16_384)]
+ExtLiteral = Literal['.jpg', '.jpeg', '.png', '.gif', '.pdf', '.swf', '.mp4', '.mp3', '.webm', '.webp', 'deleted']
+
+StrLength32 = Annotated[str, msgspec.Meta(max_length=32)]
+StrLength512 = Annotated[str, msgspec.Meta(min_length=0, max_length=512)]
+StrLength16384 = Annotated[str, msgspec.Meta(min_length=0, max_length=16_384)]
 
 
 class BasePost(msgspec.Struct, kw_only=True):
@@ -223,18 +235,18 @@ class BasePost(msgspec.Struct, kw_only=True):
     resto: NonNegativeInt
     sticky: ZeroOrOne | None = None
     closed: ZeroOrOne | None = None
-    now: ShortStr
+    now: StrLength512 | None = None
     time: PositiveInt
-    name: ShortStr | None = None
-    trip: ShortStr | None = None
-    id: Annotated[str, msgspec.Meta(max_length=32)] | None = None
-    capcode: CapcodeLiteral | None = None
+    name: StrLength512 | None = None
+    trip: StrLength512 | None = None
+    id: StrLength32 | None = None
+    capcode: StrLength32 | None = None
     country: Annotated[str, msgspec.Meta(min_length=2, max_length=2)] | None = None
-    country_name: ShortStr | None = None
-    sub: ShortStr | None = None
-    com: LongStr | None = None
-    tim: PositiveInt | None = None
-    filename: ShortStr | None = None
+    country_name: StrLength512 | None = None
+    sub: StrLength512 | None = None
+    com: StrLength16384 | None = None
+    tim: PositiveInt | MultiplyMediaTim | None = None
+    filename: StrLength512 | None = None
     ext: ExtLiteral | None = None
     fsize: PositiveInt | None = None
     md5: Annotated[str, msgspec.Meta(min_length=24, max_length=24)] | None = None
@@ -251,16 +263,16 @@ class BasePost(msgspec.Struct, kw_only=True):
     images: NonNegativeInt | None = None
     bumplimit: ZeroOrOne | None = None
     imagelimit: ZeroOrOne | None = None
-    tag: ShortStr | None = None
-    semantic_url: ShortStr | None = None
+    tag: StrLength512 | None = None
+    semantic_url: StrLength512 | None = None
     since4pass: Annotated[int, msgspec.Meta(ge=2000, le=2099)] | None = None
     unique_ips: PositiveInt | None = None
 
 
 class ChanPost(BasePost):
     '''https://github.com/4chan/4chan-API/blob/master/pages/Threads.md'''
-    board_flag: ShortStr | None = None
-    flag_name: ShortStr | None = None
+    board_flag: StrLength512 | None = None
+    flag_name: StrLength512 | None = None
     archived: ZeroOrOne | None = None
     archived_on: PositiveInt | None = None
 
@@ -544,6 +556,9 @@ def create_thumbnail_from_image(image_path: str, out_path: str, width: int=400, 
 
 
 def fetch_and_save_boards_json(filepath: str, url_boards: str, logger: Logger) -> dict:
+    if not url_boards:
+        return {}
+
     logger.info(f'Fetching {url_boards}...')
     resp = requests_get(url_boards, timeout=10)
     resp.raise_for_status()
