@@ -41,6 +41,8 @@ def create_thumbnail_from_video(video_path: str, out_path: str, width: int = 400
 
 
 def create_thumbnail_from_image(image_path: str, out_path: str, width: int = 400, height: int = 400, quality: int = 25):
+    if image_path.lower().endswith('.gif'):
+        image_path = f'{image_path}[0]'
     cmd = f'convert "{image_path}" -resize {width}x{height} -quality {quality} "{out_path}"'
     subprocess.run(cmd, shell=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
