@@ -248,9 +248,8 @@ class SutraMediaFP(MediaFP):
         dirpath = os.path.join(
             self.media_save_path,
             'img' if media_type == MediaType.full_media else 'thb',
-            filename[:2],
-            filename[2:4],
-            filename[4:6],
+            filename[0],
+            filename[1],
         )
 
         return dirpath, filename

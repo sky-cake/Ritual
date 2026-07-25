@@ -45,8 +45,8 @@ def main():
         with open(src_img, 'rb') as f:
             md5 = get_md5_b64_hash(f.read())
 
-        dst_img = os.path.join(dst_root_path, 'img', md5[:2], md5[2:4], md5[4:6], f'{md5}.{ext}')
-        dst_thb = os.path.join(dst_root_path, 'thb', md5[:2], md5[2:4], md5[4:6], f'{md5}.jpg')
+        dst_img = os.path.join(dst_root_path, 'img', md5[0], md5[1], f'{md5}.{ext}')
+        dst_thb = os.path.join(dst_root_path, 'thb', md5[0], md5[1], f'{md5}.jpg')
 
         d = os.path.dirname(dst_img)
         if d not in dir_cache:

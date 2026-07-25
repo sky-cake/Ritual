@@ -34,8 +34,8 @@ media_save_path = make_path('media')
 
 ## Sutra ##
 # Saves media to filepaths like,
-# - full media: `<media_save_path>/img/media_hash[:2]/media_hash[2:4]/media_hash[4:6]/media_hash<ext>`
-# - thumbnail:  `<media_save_path>/thb/media_hash[:2]/media_hash[2:4]/media_hash[4:6]/media_hash.jpg`
+# - full media: `<media_save_path>/img/media_hash[0]/media_hash[1]/media_hash<ext>`
+# - thumbnail:  `<media_save_path>/thb/media_hash[0]/media_hash[1]/media_hash.jpg`
 # Where media_hash are API-reported media_hash values, with `+` and `/` replaced by `-` and `_` for filesystem safety.
 # This is new to the image board archiving world, and it avoids downloading and saving duplicates files to our filesystem
 
