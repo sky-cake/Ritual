@@ -2,8 +2,6 @@ import asyncio
 import time
 import configs
 from db.base import BaseDb
-from db.mysql import MysqlDb
-from db.sqlite import SqliteDb
 from utils import get_d_board
 
 # Run ./install_asagi_tables.sh to install asagi-tables
@@ -193,7 +191,7 @@ class RitualDb:
             return
 
         ph = self.db.placeholder
-        if isinstance(self.db, SqliteDb):
+        if configs.db_type == 'sqlite':
             conflict_clause = 'on conflict(media_hash) do update set total = total + 1, media = coalesce(media, excluded.media)'
         else:
             conflict_clause = 'on duplicate key update total = total + 1, media = coalesce(media, values(media))'
@@ -252,6 +250,8 @@ class RitualDb:
 
 def create_ritual_db() -> RitualDb:
     if configs.db_type == 'mysql':
+        from db.mysql import MysqlDb
+
         db = MysqlDb(
             host=configs.db_mysql_host,
             user=configs.db_mysql_user,
@@ -261,6 +261,8 @@ def create_ritual_db() -> RitualDb:
             sql_echo=configs.db_echo
         )
     elif configs.db_type == 'sqlite':
+        from db.sqlite import SqliteDb
+
         db = SqliteDb(configs.db_sqlite_path, configs.db_echo)
     else:
         raise ValueError(configs.db_type)

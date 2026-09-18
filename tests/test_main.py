@@ -33,6 +33,7 @@ def mock_configs(monkeypatch, tmp_path):
         ensure_media_downloaded=True,
         make_thumbnails=False,
         media_save_path=str(tmp_path),
+        db_type='sqlite',
         db_path=':memory:',
         unescape_data_b4_db_write=True,
         loop_cooldown_sec=0,

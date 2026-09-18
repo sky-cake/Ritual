@@ -13,6 +13,7 @@ def mock_configs(monkeypatch):
         boards={'test': {}},
         logger=SimpleNamespace(info=lambda s: None),
         unescape_data_b4_db_write=True,
+        db_type='sqlite',
     )
     monkeypatch.setattr('db.ritual.configs', cfg)
     return cfg
