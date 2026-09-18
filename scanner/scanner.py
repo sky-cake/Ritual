@@ -179,7 +179,7 @@ def iter_media_files_fast(root_path: str, valid_exts: set[str] | None=None):
 
 class ScannerConfig:
     db_path: str = '' # default is ./scanner.db
-    root_path: str = get_root_path_from_args() or '/mnt/dl'
+    root_path: str = '/mnt/dl'
     file_exts: str = 'jpeg,jpg,png,gif' # comma separated, no dot in .ext
 
     skip_dirnames: set[str] = set()
@@ -230,6 +230,7 @@ def gather_filesystem(db: ScannerDb, conf: ScannerConfig, batch_size: int=5_000)
 
 if __name__ == '__main__':
     conf = ScannerConfig()
+    conf.root_path = get_root_path_from_args() or conf.root_path
 
     assert conf.root_path
     assert os.path.isdir(conf.root_path), conf.root_path

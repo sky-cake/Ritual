@@ -10,10 +10,19 @@ class Fetcher:
         self.session: Session = Session()
         self.state = state
 
+    def should_use_http_cache(self) -> bool:
+        if not self.state:
+            return False
+
+        if self.state.loop.is_first_loop:
+            return configs.use_http_cache_first_loop
+
+        return True
+
     def fetch_json(self, url, headers=None, request_cooldown_sec: float=None, add_random: bool=False) -> dict | None:
         request_headers = dict(headers) if headers else dict()
 
-        if not configs.ignore_http_cache and self.state:
+        if self.should_use_http_cache():
             last_modified = self.state.get_http_last_modified(url)
             if last_modified:
                 request_headers['If-Modified-Since'] = last_modified
@@ -24,7 +33,7 @@ class Fetcher:
             sleep(request_cooldown_sec, add_random=add_random)
 
         if resp.status_code == 304:
-            if not configs.ignore_http_cache and self.state:
+            if self.should_use_http_cache():
                 last_modified_header = resp.headers.get('Last-Modified')
                 if last_modified_header:
                     self.state.set_http_last_modified(url, last_modified_header)
@@ -32,7 +41,7 @@ class Fetcher:
             return dict()
 
         if resp.status_code == 200:
-            if not configs.ignore_http_cache and self.state:
+            if self.should_use_http_cache():
                 last_modified_header = resp.headers.get('Last-Modified')
                 if last_modified_header:
                     self.state.set_http_last_modified(url, last_modified_header)

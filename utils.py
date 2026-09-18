@@ -139,6 +139,24 @@ def post_has_file(post: dict) -> bool:
     return all(post.get(k) for k in post_has_file_keys)
 
 
+def db_row_to_media_post(row: dict) -> dict | None:
+    media_orig = row.get('media_orig') or ''
+    if '.' not in media_orig:
+        return None
+
+    tim, ext = media_orig.rsplit('.', maxsplit=1)
+    return {
+        'no': row.get('num'),
+        'resto': 0 if row.get('op') else row.get('thread_num'),
+        'sub': row.get('title'),
+        'com': row.get('comment'),
+        'md5': row.get('media_hash'),
+        'tim': tim,
+        'ext': f'.{ext}',
+        'fsize': row.get('media_size'),
+    }
+
+
 def create_thumbnail(post: dict, full_path: str, thumb_path: str, logger=None):
     if is_post_media_file_video(post):
         create_thumbnail_from_video(full_path, thumb_path, logger=logger)

@@ -157,6 +157,37 @@ class RitualDb:
         return set([row[0] for row in rows if row[0]])
 
 
+    def get_media_posts_for_tids(self, board: str, tids: list[int]) -> dict[int, list[dict]]:
+        """
+        Deleted posts are excluded because this is used to fetch needed media.
+        """
+        if not tids:
+            return {}
+
+        result: dict[int, list[dict]] = {tid: [] for tid in tids}
+
+        ph = self.db.placeholder
+        batch_size = 256
+
+        for i in range(0, len(tids), batch_size):
+            chunk = tids[i:i + batch_size]
+            placeholders = ','.join([ph] * len(chunk))
+            sql = f"""
+                select num, thread_num, op, title, comment, media_hash, media_orig, media_size
+                from `{board}`
+                where
+                    thread_num in ({placeholders})
+                    and deleted = 0
+                    and media_hash is not null
+                    and media_orig is not null;
+            """
+            rows = self.db.run_query_dict(sql, params=tuple(chunk))
+            for row in rows:
+                result.setdefault(row['thread_num'], []).append(row)
+
+        return result
+
+
     def upsert_image(self, board: str, media_hash: str, media: str | None):
         if not media_hash:
             return

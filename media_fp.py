@@ -14,6 +14,8 @@ from utils import (
     sleep,
     get_md5_b64_hash,
     get_fs_safe_b64,
+    is_post_media_file_image,
+    is_post_media_file_video,
     log_util,
     makedir_p,
 )
@@ -93,16 +95,33 @@ class MediaFP(ABC):
 
         if configs.make_thumbnails and media_type == MediaType.full_media:
             sleep(0.1)
-            if os.path.isfile(filepath):
-                dirpath_thumb, filename_thumb = self.get_dirpath_and_filename(board, MediaType.thumbnail, post)
-                filepath_thumb = os.path.join(dirpath_thumb, filename_thumb)
-                makedir_p(dirpath_thumb)
-                create_thumbnail(
-                    post,
-                    filepath,
-                    filepath_thumb,
-                    logger=configs.logger,
-                )
+            self.ensure_thumbnail(post, board)
+
+
+    def ensure_thumbnail(self, post: dict, board: str):
+        if not configs.make_thumbnails:
+            return
+
+        if not (is_post_media_file_image(post) or is_post_media_file_video(post)):
+            return
+
+        dirpath, filename = self.get_dirpath_and_filename(board, MediaType.full_media, post)
+        filepath = os.path.join(dirpath, filename)
+        if not os.path.isfile(filepath):
+            return
+
+        dirpath_thumb, filename_thumb = self.get_dirpath_and_filename(board, MediaType.thumbnail, post)
+        filepath_thumb = os.path.join(dirpath_thumb, filename_thumb)
+        if os.path.isfile(filepath_thumb):
+            return
+
+        makedir_p(dirpath_thumb)
+        create_thumbnail(
+            post,
+            filepath,
+            filepath_thumb,
+            logger=configs.logger,
+        )
 
 
     def should_write_to_disk(
@@ -143,6 +162,7 @@ class MediaFP(ABC):
         filepath = os.path.join(dirpath, filename)
 
         if os.path.isfile(filepath):
+            self.ensure_thumbnail(post, board)
             return
 
         content = wrap_fetch_media_bytes(self.fetcher.session, url, post['ext'])

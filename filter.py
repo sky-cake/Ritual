@@ -4,8 +4,10 @@ import configs
 from catalog import Catalog
 from db.ritual import RitualDb
 from fetcher import Fetcher
+from media_fp import MediaFP
 from state import State
 from utils import (
+    db_row_to_media_post,
     extract_text_from_html,
     fullmatch_sub_and_com,
     post_has_file,
@@ -24,16 +26,8 @@ class Filter:
         self.state = state
 
         self.tid_2_thread: dict[int, dict] = dict()
-        self.tid_2_posts: dict[int, list[dict]] = dict()
-
-        self.full_pids: set[int] = set()
-        self.thumb_pids: set[int] = set()
 
         self.banned_media_hashes: set[str] = set()
-
-
-    def set_tid_2_posts(self, tid_2_posts: dict[int, list[dict]]):
-        self.tid_2_posts = tid_2_posts
 
 
     def filter_catalog(self, catalog: Catalog) -> dict[int, dict]:
@@ -58,11 +52,6 @@ class Filter:
                 if not self.should_archive(subject_text, comment_text):
                     continue
 
-                if self.state.ignore_last_modified:
-                    self.tid_2_thread[tid] = thread
-                    self.state.is_thread_modified_cache_update(self.board, thread)
-                    continue
-
                 if not self.state.is_thread_modified_cache_update(self.board, thread):
                     not_modified_thread_count += 1
                     continue
@@ -72,9 +61,6 @@ class Filter:
         self.state.prune_old_threads(self.board)
 
         msg = f'{not_modified_thread_count} thread(s) are unmodified. ' if not_modified_thread_count else ''
-        if self.state.ignore_last_modified:
-            msg = 'Ignoring last modified timestamps on first loop. '
-
         configs.logger.info(f'[{self.board}] {msg}{len(self.tid_2_thread)} thread(s) are modified and will be queued.')
 
 
@@ -122,9 +108,13 @@ class Filter:
         return False
 
 
-    def get_pids_for_download(self):
+    def get_pids_for_download(
+        self,
+        tid_2_posts: dict[int, list[dict]],
+        tid_2_thread: dict[int, dict],
+    ) -> tuple[set[int], set[int]]:
         """
-        Populates `full_pids` and `thumb_pids` with post ids the configs request media for.
+        Returns `(full_pids, thumb_pids)` with post ids the configs request media for.
         """
         make_thumbnails = configs.make_thumbnails
 
@@ -136,8 +126,11 @@ class Filter:
         dl_th_post = configs.boards[self.board].get('dl_th_post')
         dl_th_thread = configs.boards[self.board].get('dl_th_thread')
 
+        full_pids: set[int] = set()
+        thumb_pids: set[int] = set()
+
         media_hashes = []
-        for posts in self.tid_2_posts.values():
+        for posts in tid_2_posts.values():
             for post in posts:
                 if post_has_file(post):
                     media_hashes.append(post['md5'])
@@ -145,9 +138,13 @@ class Filter:
         # applies to Asagi and Sutra filepath constructs
         banned_media_hashes = self.db.get_banned_media_hashes(self.board, media_hashes)
 
-        for tid, posts in self.tid_2_posts.items():
-            should_dl_fm_thread = self.is_media_needed_conf(self.tid_2_thread[tid], dl_fm_thread)
-            should_dl_th_thread = self.is_media_needed_conf(self.tid_2_thread[tid], dl_th_thread)
+        for tid, posts in tid_2_posts.items():
+            thread = tid_2_thread.get(tid)
+            if not thread:
+                continue
+
+            should_dl_fm_thread = self.is_media_needed_conf(thread, dl_fm_thread)
+            should_dl_th_thread = self.is_media_needed_conf(thread, dl_th_thread)
 
             for post in posts:
                 if not post_has_file(post):
@@ -166,8 +163,46 @@ class Filter:
                     pattern_or_bool_thumbs = dl_th_post
 
                 if should_dl_fm_thread or self.is_media_needed_conf(post, pattern_or_bool_full_media):
-                    self.full_pids.add(pid)
+                    full_pids.add(pid)
 
                 if not make_thumbnails:
                     if should_dl_th_thread or self.is_media_needed_conf(post, pattern_or_bool_thumbs):
-                        self.thumb_pids.add(pid)
+                        thumb_pids.add(pid)
+
+        return full_pids, thumb_pids
+
+
+    def ensure_media_downloaded(self, media_fp: MediaFP, catalog: Catalog):
+        """
+        - filter catalog
+        - see what threads/posts have media based on database query
+        - if those media aren't in the filesystem, download them
+        """
+        tid_2_thread: dict[int, dict] = dict()
+        for tid, thread in catalog.tid_2_thread.items():
+            subject_text = extract_text_from_html(thread.get('sub', ''))
+            comment_text = extract_text_from_html(thread.get('com', ''))
+
+            if self.should_archive(subject_text, comment_text):
+                tid_2_thread[tid] = thread
+
+        raw_posts = self.db.get_media_posts_for_tids(self.board, list(tid_2_thread))
+
+        tid_2_posts: dict[int, list[dict]] = dict()
+        for tid, rows in raw_posts.items():
+            posts = [post for row in rows if (post := db_row_to_media_post(row))]
+            if posts:
+                tid_2_posts[tid] = posts
+
+        full_pids, thumb_pids = self.get_pids_for_download(tid_2_posts, tid_2_thread)
+        if not full_pids and not thumb_pids:
+            return
+
+        pid_2_post = {post['no']: post for posts in tid_2_posts.values() for post in posts}
+
+        configs.logger.info(
+            f'[{self.board}] ensure_media_downloaded: verifying {len(full_pids)} full media '
+            f'and {len(thumb_pids)} thumbnail(s) from the database'
+        )
+
+        media_fp.download_media_for_ids(self.board, pid_2_post, full_pids, thumb_pids)

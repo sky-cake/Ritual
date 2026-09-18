@@ -1,6 +1,5 @@
 import json
 import os
-import tempfile
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -12,31 +11,15 @@ from enums import MediaType
 from fetcher import Fetcher
 from filter import Filter
 from loop import Loop
+from media_fp import AsagiMediaFP
 from posts import Posts
 from state import State
 from tests.conftest import create_test_sqlite_db
-
-
-class MockMediaFP:
-    def __init__(self, media_save_path):
-        self.media_save_path = media_save_path
-
-    def is_media_needed(self, post, media_type, board):
-        if not post.get('tim') or not post.get('ext'):
-            return False
-        filename = f"{post['tim']}{post['ext']}" if media_type == MediaType.full_media else f"{post['tim']}s.jpg"
-        tim = filename.rsplit('.', maxsplit=1)[0]
-        filepath = os.path.join(self.media_save_path, board, media_type.value, tim[:4], tim[4:6], filename)
-        return not os.path.isfile(filepath)
+from utils import db_row_to_media_post
 
 
 @pytest.fixture
-def mock_media(mock_configs):
-    return MockMediaFP(mock_configs.media_save_path)
-
-
-@pytest.fixture
-def mock_configs(monkeypatch):
+def mock_configs(monkeypatch, tmp_path):
     cfg = SimpleNamespace(
         url_catalog='https://a.4cdn.org/{board}/catalog.json',
         url_thread='https://a.4cdn.org/{board}/thread/{thread_id}.json',
@@ -46,11 +29,10 @@ def mock_configs(monkeypatch):
         logger=SimpleNamespace(info=lambda s: None, warning=lambda s: None, error=lambda s: None),
         boards={'po': {'thread_text': True}},
         boards_with_archive=[],
-        ignore_last_modified=False,
-        ignore_thread_cache=False,
-        ignore_http_cache=False,
+        use_http_cache_first_loop=False,
+        ensure_media_downloaded=True,
         make_thumbnails=False,
-        media_save_path=tempfile.mkdtemp(),
+        media_save_path=str(tmp_path),
         db_path=':memory:',
         unescape_data_b4_db_write=True,
         loop_cooldown_sec=0,
@@ -58,6 +40,13 @@ def mock_configs(monkeypatch):
     monkeypatch.setattr('main.configs', cfg)
     monkeypatch.setattr('db.ritual.configs', cfg)
     monkeypatch.setattr('filter.configs', cfg)
+    monkeypatch.setattr('media_fp.configs', cfg)
+    monkeypatch.setattr('posts.configs', cfg)
+    monkeypatch.setattr('archive.configs', cfg)
+    monkeypatch.setattr('fetcher.configs', cfg)
+    monkeypatch.setattr('catalog.configs', cfg)
+    monkeypatch.setattr('loop.configs', cfg)
+    monkeypatch.setattr('state.configs', cfg)
 
     return cfg
 
@@ -78,15 +67,14 @@ def mock_fetcher(catalog_json, thread_json, state):
 
 
 @pytest.fixture
-def loop():
+def loop(mock_configs):
     return Loop()
 
 
 @pytest.fixture
-def state(loop):
-    s = State(loop)
-    s.last_modified = {}
-    return s
+def state(loop, tmp_path, monkeypatch):
+    monkeypatch.setattr('state.make_path', lambda *parts: str(tmp_path.joinpath(*parts)))
+    return State(loop)
 
 
 @pytest.fixture
@@ -142,6 +130,32 @@ class TestCatalog:
         
         if has_replies:
             assert len(catalog.tid_2_last_replies) > 0
+
+
+class TestShouldUseHttpCache:
+    def test_first_loop_bypasses_cache(self, state, mock_configs):
+        mock_configs.use_http_cache_first_loop = False
+        fetcher = Fetcher(state)
+
+        assert fetcher.should_use_http_cache() is False
+
+    def test_first_loop_honors_cache_when_enabled(self, state, mock_configs):
+        mock_configs.use_http_cache_first_loop = True
+        fetcher = Fetcher(state)
+
+        assert fetcher.should_use_http_cache() is True
+
+    def test_later_loop_always_honors_cache(self, state, mock_configs):
+        mock_configs.use_http_cache_first_loop = False
+        state.loop.increment_loop()
+        fetcher = Fetcher(state)
+
+        assert fetcher.should_use_http_cache() is True
+
+    def test_no_state_bypasses_cache(self, mock_configs):
+        fetcher = Fetcher(None)
+
+        assert fetcher.should_use_http_cache() is False
 
 
 class TestState:
@@ -220,86 +234,93 @@ class TestState:
 
 
 class TestFilter:
-    def test_should_archive_whitelist(self, mock_fetcher, db, state, mock_configs, mock_media):
+    def test_should_archive_whitelist(self, mock_fetcher, db, state, mock_configs):
         mock_configs.boards['po'] = {'whitelist': 'origami|paper'}
-        filter_obj = Filter(mock_fetcher, db, 'po', state, mock_media)
+        filter_obj = Filter(mock_fetcher, db, 'po', state)
         
         assert filter_obj.should_archive('origami discussion', '')
         assert filter_obj.should_archive('', 'paper craft')
         assert not filter_obj.should_archive('random', 'topic')
 
-    def test_should_archive_blacklist(self, mock_fetcher, db, state, mock_configs, mock_media):
+    def test_should_archive_blacklist(self, mock_fetcher, db, state, mock_configs):
         mock_configs.boards['po'] = {'blacklist': 'spam'}
-        filter_obj = Filter(mock_fetcher, db, 'po', state, mock_media)
+        filter_obj = Filter(mock_fetcher, db, 'po', state)
         
         assert not filter_obj.should_archive('spam thread', '')
         assert not filter_obj.should_archive('', 'this is spam')
         assert filter_obj.should_archive('legitimate', 'topic')
 
-    def test_should_archive_blacklist_overrides_whitelist(self, mock_fetcher, db, state, mock_configs, mock_media):
+    def test_should_archive_blacklist_overrides_whitelist(self, mock_fetcher, db, state, mock_configs):
         mock_configs.boards['po'] = {
             'blacklist': 'spam',
             'whitelist': 'origami'
         }
-        filter_obj = Filter(mock_fetcher, db, 'po', state, mock_media)
+        filter_obj = Filter(mock_fetcher, db, 'po', state)
         
         assert not filter_obj.should_archive('spam origami', '')
 
-    def test_should_archive_min_chars(self, mock_fetcher, db, state, mock_configs, mock_media):
+    def test_should_archive_min_chars(self, mock_fetcher, db, state, mock_configs):
         mock_configs.boards['po'] = {'op_comment_min_chars': 10}
-        filter_obj = Filter(mock_fetcher, db, 'po', state, mock_media)
+        filter_obj = Filter(mock_fetcher, db, 'po', state)
         
         assert not filter_obj.should_archive('', 'short')
         assert filter_obj.should_archive('', 'this is long enough')
 
-    def test_should_archive_min_unique_chars(self, mock_fetcher, db, state, mock_configs, mock_media):
+    def test_should_archive_min_unique_chars(self, mock_fetcher, db, state, mock_configs):
         mock_configs.boards['po'] = {'op_comment_min_chars_unique': 5}
-        filter_obj = Filter(mock_fetcher, db, 'po', state, mock_media)
+        filter_obj = Filter(mock_fetcher, db, 'po', state)
         
         assert not filter_obj.should_archive('', 'aaaa')
         assert filter_obj.should_archive('', 'abcde')
 
-    def test_is_media_needed_file_exists(self, mock_fetcher, db, state, mock_configs, tmp_path, mock_media):
-        mock_configs.media_save_path = str(tmp_path)
-        mock_media.media_save_path = str(tmp_path)
-        filter_obj = Filter(mock_fetcher, db, 'po', state, mock_media)
-        
-        post = {'no': 1, 'tim': 123456, 'ext': '.jpg', 'sub': 'test', 'com': 'test'}
-        
-        media_dir = tmp_path / 'po' / 'image' / '1234' / '56'
-        media_dir.mkdir(parents=True, exist_ok=True)
-        (media_dir / '123456.jpg').touch()
-        
-        result = filter_obj.is_media_needed(post, True, MediaType.full_media)
-        assert result is False
+    def test_is_media_needed_conf_pattern_match(self, mock_fetcher, db, state, mock_configs):
+        filter_obj = Filter(mock_fetcher, db, 'po', state)
 
-    def test_is_media_needed_duplicate_hash(self, mock_fetcher, db, state, mock_configs, tmp_path, mock_media):
-        mock_configs.media_save_path = str(tmp_path)
-        mock_media.media_save_path = str(tmp_path)
-        filter_obj = Filter(mock_fetcher, db, 'po', state, mock_media)
-        
-        post = {'no': 1, 'tim': 123456, 'ext': '.jpg', 'md5': 'testhash123', 'sub': 'test', 'com': 'test'}
-        stored_filename = '123456.jpg'
-        
-        media_dir = tmp_path / 'po' / 'image' / '1234' / '56'
-        media_dir.mkdir(parents=True, exist_ok=True)
-        (media_dir / stored_filename).touch()
-        
-        result = filter_obj.is_media_needed(post, True, MediaType.full_media)
-        
-        assert result is False
-
-    def test_is_media_needed_pattern_match(self, mock_fetcher, db, state, mock_configs, tmp_path, mock_media):
-        mock_configs.media_save_path = str(tmp_path)
-        mock_media.media_save_path = str(tmp_path)
-        filter_obj = Filter(mock_fetcher, db, 'po', state, mock_media)
-        
         post = {'no': 1, 'tim': 123456, 'ext': '.jpg', 'sub': 'test', 'com': 'wireguard'}
         pattern = '.*wireguard.*'
-        
-        result = filter_obj.is_media_needed(post, pattern, MediaType.full_media)
-        
-        assert result is True
+
+        assert filter_obj.is_media_needed_conf(post, pattern) is True
+
+    def test_is_media_needed_conf_bool(self, mock_fetcher, db, state, mock_configs):
+        filter_obj = Filter(mock_fetcher, db, 'po', state)
+
+        assert filter_obj.is_media_needed_conf({}, True) is True
+        assert filter_obj.is_media_needed_conf({}, False) is False
+        assert filter_obj.is_media_needed_conf({}, None) is False
+
+
+class TestDownloadSkipsExisting:
+    def test_download_full_media_skips_existing_file(self, mock_fetcher, db, mock_configs, tmp_path, monkeypatch):
+        media_fp = AsagiMediaFP(mock_fetcher, str(tmp_path), db, None)
+        post = {'tim': 123456, 'ext': '.jpg', 'md5': 'h1'}
+
+        dirpath, filename = media_fp.get_dirpath_and_filename('po', MediaType.full_media, post)
+        os.makedirs(dirpath, exist_ok=True)
+        with open(os.path.join(dirpath, filename), 'wb') as f:
+            f.write(b'data')
+
+        fetch = Mock()
+        monkeypatch.setattr('media_fp.wrap_fetch_media_bytes', fetch)
+
+        media_fp.download_full_media('http://example.com/123456.jpg', post, 'po')
+
+        fetch.assert_not_called()
+
+    def test_download_thumbnail_skips_existing_file(self, mock_fetcher, db, mock_configs, tmp_path, monkeypatch):
+        media_fp = AsagiMediaFP(mock_fetcher, str(tmp_path), db, None)
+        post = {'tim': 123456, 'ext': '.jpg', 'md5': 'h1'}
+
+        dirpath, filename = media_fp.get_dirpath_and_filename('po', MediaType.thumbnail, post)
+        os.makedirs(dirpath, exist_ok=True)
+        with open(os.path.join(dirpath, filename), 'wb') as f:
+            f.write(b'data')
+
+        fetch = Mock()
+        monkeypatch.setattr('media_fp.wrap_fetch_media_bytes', fetch)
+
+        media_fp.download_thumbnail('http://example.com/123456s.jpg', post, 'po')
+
+        fetch.assert_not_called()
 
 
 class TestPosts:
@@ -415,7 +436,7 @@ class TestLoop:
 
 
 class TestIntegration:
-    def test_full_flow_no_api_calls(self, mock_fetcher, db, state, loop, catalog_json, thread_json, mock_configs, mock_media):
+    def test_full_flow_no_api_calls(self, mock_fetcher, db, state, loop, catalog_json, thread_json, mock_configs):
         mock_configs.boards['po'] = {'thread_text': True}
         
         catalog = Catalog(mock_fetcher, 'po')
@@ -423,7 +444,7 @@ class TestIntegration:
         catalog.set_tid_2_thread()
         catalog.set_tid_2_last_replies()
         
-        filter_obj = Filter(mock_fetcher, db, 'po', state, mock_media)
+        filter_obj = Filter(mock_fetcher, db, 'po', state)
         filter_obj.filter_catalog(catalog)
         
         posts = Posts(db, mock_fetcher, 'po', filter_obj.tid_2_thread, state, catalog)
@@ -433,3 +454,174 @@ class TestIntegration:
         
         assert len(posts.pid_2_post) > 0
         assert len(filter_obj.tid_2_thread) > 0
+
+
+def insert_media_post(db, board, num, thread_num, op, media_hash, media_orig, media_size=100, deleted=0):
+    db.db.conn.execute(
+        f'insert into `{board}` (num, thread_num, subnum, op, title, comment, media_hash, media_orig, media_size, deleted) '
+        f'values (?, ?, 0, ?, ?, ?, ?, ?, ?, ?)',
+        (num, thread_num, op, 'title', 'comment', media_hash, media_orig, media_size, deleted),
+    )
+    db.db.conn.commit()
+
+
+class TestDbRowToMediaPost:
+    def test_reconstructs_post(self):
+        row = {
+            'num': 5,
+            'thread_num': 1,
+            'op': 0,
+            'title': 'subject',
+            'comment': 'body',
+            'media_hash': 'hashhashhashhashhashhash',
+            'media_orig': '1234567890.jpg',
+            'media_size': 42,
+        }
+        post = db_row_to_media_post(row)
+
+        assert post['no'] == 5
+        assert post['resto'] == 1
+        assert post['sub'] == 'subject'
+        assert post['com'] == 'body'
+        assert post['md5'] == 'hashhashhashhashhashhash'
+        assert post['tim'] == '1234567890'
+        assert post['ext'] == '.jpg'
+        assert post['fsize'] == 42
+
+    def test_non_media_returns_none(self):
+        assert db_row_to_media_post({'media_orig': 'deleted'}) is None
+        assert db_row_to_media_post({'media_orig': None}) is None
+
+
+class TestGetPostsForTids:
+    def test_groups_by_thread_and_excludes_deleted(self, db):
+        insert_media_post(db, 'po', 1, 1, 1, 'h1', '111.jpg')
+        insert_media_post(db, 'po', 2, 1, 0, 'h2', '222.png')
+        insert_media_post(db, 'po', 3, 2, 1, 'h3', '333.gif')
+        insert_media_post(db, 'po', 4, 2, 0, 'h4', '444.jpg', deleted=1)
+
+        result = db.get_media_posts_for_tids('po', [1, 2])
+
+        assert {row['num'] for row in result[1]} == {1, 2}
+        assert {row['num'] for row in result[2]} == {3}
+
+    def test_empty_tids(self, db):
+        assert db.get_media_posts_for_tids('po', []) == {}
+
+
+class TestGetPidsForDownload:
+    def test_all_full_media(self, mock_fetcher, db, state, mock_configs):
+        mock_configs.boards['po'] = {'dl_fm_op': True, 'dl_fm_post': True}
+        filter_obj = Filter(mock_fetcher, db, 'po', state)
+
+        tid_2_posts = {
+            1: [
+                {'no': 1, 'tim': '111', 'ext': '.jpg', 'md5': 'h1', 'sub': '', 'com': ''},
+                {'no': 2, 'tim': '222', 'ext': '.png', 'md5': 'h2', 'sub': '', 'com': ''},
+            ]
+        }
+        tid_2_thread = {1: {'no': 1}}
+
+        full_pids, thumb_pids = filter_obj.get_pids_for_download(tid_2_posts, tid_2_thread)
+
+        assert full_pids == {1, 2}
+        assert thumb_pids == set()
+
+    def test_missing_thread_entry_is_skipped(self, mock_fetcher, db, state, mock_configs):
+        mock_configs.boards['po'] = {'dl_fm_post': True}
+        filter_obj = Filter(mock_fetcher, db, 'po', state)
+
+        tid_2_posts = {1: [{'no': 2, 'tim': '222', 'ext': '.png', 'md5': 'h2', 'sub': '', 'com': ''}]}
+
+        full_pids, _ = filter_obj.get_pids_for_download(tid_2_posts, {})
+
+        assert full_pids == set()
+
+
+class TestEnsureThumbnail:
+    def test_missing_thumb_created(self, mock_fetcher, db, mock_configs, tmp_path, monkeypatch):
+        mock_configs.make_thumbnails = True
+        media_fp = AsagiMediaFP(mock_fetcher, str(tmp_path), db, None)
+        post = {'tim': 123456, 'ext': '.jpg', 'md5': 'h1'}
+
+        dirpath, filename = media_fp.get_dirpath_and_filename('po', MediaType.full_media, post)
+        os.makedirs(dirpath, exist_ok=True)
+        with open(os.path.join(dirpath, filename), 'wb'):
+            pass
+
+        calls = []
+        monkeypatch.setattr('media_fp.create_thumbnail', lambda *a, **k: calls.append((a, k)))
+
+        media_fp.ensure_thumbnail(post, 'po')
+
+        assert len(calls) == 1
+        _, full_path, thumb_path = calls[0][0]
+        assert os.path.isfile(full_path)
+        assert thumb_path.endswith('123456s.jpg')
+
+    def test_unsupported_media_skipped(self, mock_fetcher, db, mock_configs, tmp_path, monkeypatch):
+        mock_configs.make_thumbnails = True
+        media_fp = AsagiMediaFP(mock_fetcher, str(tmp_path), db, None)
+        post = {'tim': 123456, 'ext': '.pdf', 'md5': 'h1'}
+
+        dirpath, filename = media_fp.get_dirpath_and_filename('po', MediaType.full_media, post)
+        os.makedirs(dirpath, exist_ok=True)
+        with open(os.path.join(dirpath, filename), 'wb'):
+            pass
+
+        calls = []
+        monkeypatch.setattr('media_fp.create_thumbnail', lambda *a, **k: calls.append((a, k)))
+
+        media_fp.ensure_thumbnail(post, 'po')
+
+        assert calls == []
+
+
+class TestEnsureMediaDownloaded:
+    def test_downloads_missing_media_from_db(self, mock_fetcher, db, state, mock_configs):
+        mock_configs.boards['po'] = {'dl_fm_op': True, 'dl_fm_post': True}
+        insert_media_post(db, 'po', 1, 1, 1, 'h1', '111.jpg')
+        insert_media_post(db, 'po', 2, 1, 0, 'h2', '222.png')
+
+        catalog = Catalog(mock_fetcher, 'po')
+        catalog.tid_2_thread = {1: {'no': 1, 'sub': 'x', 'com': 'y'}}
+
+        filter_obj = Filter(mock_fetcher, db, 'po', state)
+        media_fp = Mock()
+
+        filter_obj.ensure_media_downloaded(media_fp, catalog)
+
+        media_fp.download_media_for_ids.assert_called_once()
+        board, pid_2_post, full_pids, thumb_pids = media_fp.download_media_for_ids.call_args.args
+        assert board == 'po'
+        assert full_pids == {1, 2}
+        assert thumb_pids == set()
+        assert set(pid_2_post) == {1, 2}
+
+    def test_deleted_posts_are_skipped(self, mock_fetcher, db, state, mock_configs):
+        mock_configs.boards['po'] = {'dl_fm_op': True}
+        insert_media_post(db, 'po', 1, 1, 1, 'h1', '111.jpg', deleted=1)
+
+        catalog = Catalog(mock_fetcher, 'po')
+        catalog.tid_2_thread = {1: {'no': 1, 'sub': 'x', 'com': 'y'}}
+
+        filter_obj = Filter(mock_fetcher, db, 'po', state)
+        media_fp = Mock()
+
+        filter_obj.ensure_media_downloaded(media_fp, catalog)
+
+        media_fp.download_media_for_ids.assert_not_called()
+
+    def test_filtered_threads_are_skipped(self, mock_fetcher, db, state, mock_configs):
+        mock_configs.boards['po'] = {'blacklist': 'skipme', 'dl_fm_op': True}
+        insert_media_post(db, 'po', 1, 1, 1, 'h1', '111.jpg')
+
+        catalog = Catalog(mock_fetcher, 'po')
+        catalog.tid_2_thread = {1: {'no': 1, 'sub': 'skipme', 'com': ''}}
+
+        filter_obj = Filter(mock_fetcher, db, 'po', state)
+        media_fp = Mock()
+
+        filter_obj.ensure_media_downloaded(media_fp, catalog)
+
+        media_fp.download_media_for_ids.assert_not_called()
