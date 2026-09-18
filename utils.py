@@ -453,10 +453,9 @@ def fetch_media_bytes(
     logger: Logger | None=None,
     session: Session | None=None,
     max_bytes: int | None=None,
-    max_retries: int=2,
-    retry_backoff_sec: float=5.0,
 ) -> bytes | None:
-    for attempt in range(max_retries + 1):
+    retry_secs = [5, 10]
+    for i in range(len(retry_secs)+1):
         try:
             data = fetch_media_bytes_once(
                 url,
@@ -465,24 +464,24 @@ def fetch_media_bytes(
                 session=session,
                 max_bytes=max_bytes,
             )
-        except (requests_exceptions.ChunkedEncodingError, requests_exceptions.ConnectionError) as e:
-            if attempt == max_retries:
-                log_util(logger, f'Download failed after {max_retries + 1} attempt(s): {url=} - {e}')
+
+            if data is None:
+                sleep(0.1) # avoid overwhelming the server if it keeps returning nothing
                 return
 
-            wait = retry_backoff_sec * (2 ** attempt)
-            log_util(logger, f'Download interrupted: {url=} - {e}. Retrying in {wait:.0f}s...')
-            sleep(wait)
-            continue
+            time_to_sleep = video_cooldown_sec if is_video_path(ext) else image_cooldown_sec if is_image_path(ext) else 2.0
+            sleep(time_to_sleep)
+            return data
 
-        if data is None:
-            return
+        except (requests_exceptions.ChunkedEncodingError, requests_exceptions.ConnectionError) as e:
+            if i == len(retry_secs):
+                log_util(logger, f'Download failed after retrying {retry_secs}. Moving on.')
+                return
 
-        # We only sleep if we decide to download a file
-        time_to_sleep = video_cooldown_sec if is_video_path(ext) else image_cooldown_sec if is_image_path(ext) else 2.0
-        sleep(time_to_sleep)
-
-        return data
+            retry_sec = retry_secs[i]
+            log_util(logger, f'Download error on attempt ({i+1}/{len(retry_secs)}): {url=} - {e}.')
+            log_util(logger, f'Retrying in {retry_sec}s...')
+            sleep(retry_sec)
 
 
 def fetch_media_bytes_once(

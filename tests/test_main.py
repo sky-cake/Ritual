@@ -678,11 +678,11 @@ class TestFetchMediaBytesRetry:
 
         session = FakeSession([FakeResponse(raise_exc=ChunkedEncodingError('incomplete read')) for _ in range(3)])
 
-        result = fetch_media_bytes('http://example.com/x.jpg', '.jpg', session=session, max_retries=2)
+        result = fetch_media_bytes('http://example.com/x.jpg', '.jpg', session=session)
 
         assert result is None
         assert session.calls == 3
-        assert waits == [5.0, 10.0]  # exponential backoff
+        assert waits == [5, 10]
 
     def test_success_sleeps_cooldown_only(self, monkeypatch):
         waits = []
