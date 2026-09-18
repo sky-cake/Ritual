@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from requests.exceptions import ChunkedEncodingError
 
 from catalog import Catalog
 from db.ritual import RitualDb
@@ -15,7 +16,7 @@ from media_fp import AsagiMediaFP
 from posts import Posts
 from state import State
 from tests.conftest import create_test_sqlite_db
-from utils import db_row_to_media_post
+from utils import db_row_to_media_post, fetch_media_bytes
 
 
 @pytest.fixture
@@ -626,3 +627,70 @@ class TestEnsureMediaDownloaded:
         filter_obj.ensure_media_downloaded(media_fp, catalog)
 
         media_fp.download_media_for_ids.assert_not_called()
+
+
+class FakeResponse:
+    def __init__(self, chunks=None, raise_exc=None):
+        self.status_code = 200
+        self.headers = {}
+        self._chunks = chunks or []
+        self._raise_exc = raise_exc
+
+    def iter_content(self, chunk_size):
+        if self._raise_exc:
+            raise self._raise_exc
+        yield from self._chunks
+
+    def close(self):
+        pass
+
+
+class FakeSession:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = 0
+
+    def get(self, url, headers=None, stream=True):
+        response = self.responses[self.calls]
+        self.calls += 1
+        return response
+
+
+class TestFetchMediaBytesRetry:
+    def test_retries_after_chunked_encoding_error(self, monkeypatch):
+        waits = []
+        monkeypatch.setattr('utils.sleep', lambda t, add_random=False: waits.append(t))
+
+        session = FakeSession([
+            FakeResponse(raise_exc=ChunkedEncodingError('incomplete read')),
+            FakeResponse(chunks=[b'data']),
+        ])
+
+        result = fetch_media_bytes('http://example.com/x.jpg', '.jpg', session=session)
+
+        assert result == b'data'
+        assert session.calls == 2
+        assert waits == [5.0, 2.2]  # backoff, then image cooldown
+
+    def test_gives_up_after_max_retries(self, monkeypatch):
+        waits = []
+        monkeypatch.setattr('utils.sleep', lambda t, add_random=False: waits.append(t))
+
+        session = FakeSession([FakeResponse(raise_exc=ChunkedEncodingError('incomplete read')) for _ in range(3)])
+
+        result = fetch_media_bytes('http://example.com/x.jpg', '.jpg', session=session, max_retries=2)
+
+        assert result is None
+        assert session.calls == 3
+        assert waits == [5.0, 10.0]  # exponential backoff
+
+    def test_success_sleeps_cooldown_only(self, monkeypatch):
+        waits = []
+        monkeypatch.setattr('utils.sleep', lambda t, add_random=False: waits.append(t))
+
+        session = FakeSession([FakeResponse(chunks=[b'data'])])
+
+        result = fetch_media_bytes('http://example.com/x.jpg', '.jpg', session=session)
+
+        assert result == b'data'
+        assert waits == [2.2]

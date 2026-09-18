@@ -17,6 +17,7 @@ from typing import Annotated, Literal
 
 import msgspec
 from requests import Session
+from requests import exceptions as requests_exceptions
 from requests import get as requests_get
 
 from enums import MediaType
@@ -452,9 +453,45 @@ def fetch_media_bytes(
     logger: Logger | None=None,
     session: Session | None=None,
     max_bytes: int | None=None,
+    max_retries: int=2,
+    retry_backoff_sec: float=5.0,
 ) -> bytes | None:
-    """Handles sleeping after requests"""
+    for attempt in range(max_retries + 1):
+        try:
+            data = fetch_media_bytes_once(
+                url,
+                headers=headers,
+                logger=logger,
+                session=session,
+                max_bytes=max_bytes,
+            )
+        except (requests_exceptions.ChunkedEncodingError, requests_exceptions.ConnectionError) as e:
+            if attempt == max_retries:
+                log_util(logger, f'Download failed after {max_retries + 1} attempt(s): {url=} - {e}')
+                return
 
+            wait = retry_backoff_sec * (2 ** attempt)
+            log_util(logger, f'Download interrupted: {url=} - {e}. Retrying in {wait:.0f}s...')
+            sleep(wait)
+            continue
+
+        if data is None:
+            return
+
+        # We only sleep if we decide to download a file
+        time_to_sleep = video_cooldown_sec if is_video_path(ext) else image_cooldown_sec if is_image_path(ext) else 2.0
+        sleep(time_to_sleep)
+
+        return data
+
+
+def fetch_media_bytes_once(
+    url: str,
+    headers: dict | None=None,
+    logger: Logger | None=None,
+    session: Session | None=None,
+    max_bytes: int | None=None,
+) -> bytes | None:
     resp = (session.get if session else requests_get)(url, headers=headers, stream=True)
 
     try:
@@ -486,10 +523,6 @@ def fetch_media_bytes(
     finally:
         # always return connection to session pool
         resp.close()
-
-    # We only sleep if we decide to download a file
-    time_to_sleep = video_cooldown_sec if is_video_path(ext) else image_cooldown_sec if is_image_path(ext) else 2.0
-    sleep(time_to_sleep)
 
     return bytes(data)
 
