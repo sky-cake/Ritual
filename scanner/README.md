@@ -19,8 +19,8 @@ This results in storing duplicate files across difference board and tim values i
 
 SutraMediaFPs uses the following. It does not modify the Asagi database schema. It allows you to store media in the form,
 
-- `.../img/md5[:2]/md5[2:4]/md5[4:6]/md5.ext/md5<ext>` for full media.
-- `.../thb/md5[:2]/md5[2:4]/md5[4:6]/md5.ext/md5<.jpg>` for thumbnails.
+- `.../img/md5[0]/md5[1]/md5.ext/md5<ext>` for full media.
+- `.../thb/md5[0]/md5[1]/md5.ext/md5<.jpg>` for thumbnails.
 
 Note: This is the API-reported `md5` value from the 4chan API, not the `md5_computed` value from the scanner database. Base64 characters `+` and `/` are replaced with `-` and `_` for filesystem safety.
 

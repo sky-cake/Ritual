@@ -1,13 +1,17 @@
 import json
-import tempfile
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from db.ritual import RitualDb
 from db.sqlite import SqliteDb
 from utils import make_path
+
+
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch):
+    def blocked(self, *args, **kwargs):
+        raise RuntimeError('Network access is disabled in tests')
+
+    monkeypatch.setattr('requests.sessions.Session.request', blocked)
 
 
 def create_test_sqlite_db(board: str) -> SqliteDb:

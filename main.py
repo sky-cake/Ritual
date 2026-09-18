@@ -17,6 +17,7 @@ from utils import (
     load_boards_with_archive,
     make_path,
     read_json,
+    setup_logger,
     sleep,
     assert_thumbnail_deps
 )
@@ -24,6 +25,18 @@ from utils import (
 
 class Init:
     def __init__(self):
+        if not os.path.isdir(configs.media_save_path):
+            os.makedirs(configs.media_save_path, mode=0o775)
+            os.chmod(configs.media_save_path, 0o775)
+
+        configs.logger = setup_logger(
+            configs.logger_name,
+            log_file=configs.log_file,
+            stdout=configs.log_stdout,
+            file_rotate_size=configs.log_filesize,
+            max_files=configs.log_max_files,
+        )
+
         if configs.make_thumbnails:
             assert_thumbnail_deps(configs.logger)
 
@@ -60,11 +73,14 @@ def process_board(board: str, db: RitualDb, fetcher: Fetcher, loop: Loop, state:
     if configs.boards[board].get('thread_text') != False:
         posts.save_posts()
 
-    filter.set_tid_2_posts(posts.tid_2_posts)
-    filter.get_pids_for_download()
+    full_pids, thumb_pids = filter.get_pids_for_download(posts.tid_2_posts, filter.tid_2_thread)
 
-    media_fp.download_media_for_ids(board, posts.pid_2_post, filter.full_pids, filter.thumb_pids)
+    media_fp.download_media_for_ids(board, posts.pid_2_post, full_pids, thumb_pids)
+
     media_fp.flush(board)
+
+    if loop.is_first_loop and configs.ensure_media_downloaded:
+        filter.ensure_media_downloaded(media_fp, catalog)
 
     loop.set_board_duration_minutes(board)
 

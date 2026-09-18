@@ -31,10 +31,6 @@ class State:
 
         self.read()
 
-    @property
-    def ignore_last_modified(self) -> bool:
-        return self.loop.is_first_loop and configs.ignore_thread_cache
-
     def save(self):
         '''writes every cache'''
         try:

@@ -126,8 +126,8 @@ def migrate(boards: list[str], db_path_scanner: str, db_path_ritual: str, root_a
                 dst_full_name = f'{media_hash}.{ext}'
                 dst_thumb_name = f'{media_hash}.jpg'
 
-                dst_full = os.path.join(sutra_full_root, dst_full_name[:2], dst_full_name[2:4], dst_full_name[4:6], dst_full_name)
-                dst_thumb = os.path.join(sutra_thumb_root, dst_thumb_name[:2], dst_thumb_name[2:4], dst_thumb_name[4:6], dst_thumb_name)
+                dst_full = os.path.join(sutra_full_root, dst_full_name[0], dst_full_name[1], dst_full_name)
+                dst_thumb = os.path.join(sutra_thumb_root, dst_thumb_name[0], dst_thumb_name[1], dst_thumb_name)
 
                 if os.path.exists(src_full):
                     d = os.path.dirname(dst_full)

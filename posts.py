@@ -124,12 +124,12 @@ class Posts:
 
             pids_found = {post['no'] for post in thread['posts']}
             pids_all = tid_2_existing_pids.get(tid, set())
-            pids_deleted = []
-            for pid in pids_all:
-                if pid not in pids_found:
-                    pids_deleted.append(pid)
+            tid_pids_deleted = [pid for pid in pids_all if pid not in pids_found]
 
-            if pids_deleted: configs.logger.info(f'[{self.board}] [{tid}] Posts deleted: {pids_deleted}')
+            if tid_pids_deleted:
+                configs.logger.info(f'[{self.board}] [{tid}] Posts deleted: {tid_pids_deleted}')
+
+            pids_deleted.extend(tid_pids_deleted)
 
             self.tid_2_posts[tid] = thread['posts']
 
