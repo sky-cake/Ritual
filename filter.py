@@ -4,7 +4,7 @@ import configs
 from catalog import Catalog
 from db.ritual import RitualDb
 from fetcher import Fetcher
-from media_fp import MediaFP
+from media_fp import MediaFP, get_board_has_dl_th
 from state import State
 from utils import (
     db_row_to_media_post,
@@ -117,6 +117,7 @@ class Filter:
         Returns `(full_pids, thumb_pids)` with post ids the configs request media for.
         """
         make_thumbnails = configs.make_thumbnails
+        board_has_dl_th = get_board_has_dl_th(self.board)
 
         dl_fm_op = configs.boards[self.board].get('dl_fm_op')
         dl_fm_post = configs.boards[self.board].get('dl_fm_post')
@@ -165,9 +166,15 @@ class Filter:
                 if should_dl_fm_thread or self.is_media_needed_conf(post, pattern_or_bool_full_media):
                     full_pids.add(pid)
 
-                if not make_thumbnails:
+                # do we care about downloading thumbs?
+                if not make_thumbnails or board_has_dl_th:
+
+                    # specific post filtering
                     if should_dl_th_thread or self.is_media_needed_conf(post, pattern_or_bool_thumbs):
-                        thumb_pids.add(pid)
+
+                        # dont download thumbs if we will generate them from full media
+                        if not (make_thumbnails and pid in full_pids):
+                            thumb_pids.add(pid)
 
         return full_pids, thumb_pids
 

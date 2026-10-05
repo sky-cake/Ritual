@@ -67,6 +67,8 @@ Here is how the flexible archive configurations work.
     - `thread`: media in the whole thread
     - `post`: media per post
 
+- When `make_thumbnails = True`, and `dl_fm` and `dl_th` exists, thumbnails are generated rather than fetched.
+
 Here is an example from `rename_to_configs.py`,
 
 ```python

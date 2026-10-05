@@ -21,6 +21,13 @@ from utils import (
 )
 
 
+def get_board_has_dl_th(board: str) -> bool:
+    return any(
+        configs.boards[board].get(key) is not None
+        for key in ('dl_th_op', 'dl_th_post', 'dl_th_thread')
+    )
+
+
 def wrap_fetch_media_bytes(session: Session, url: str, ext: str) -> bytes | None:
     return fetch_media_bytes(
         url,
@@ -215,10 +222,13 @@ class MediaFP(ABC):
             url = get_media_url(configs.url_full_media, board, post, MediaType.full_media)
             self.download_full_media(url, post, board)
 
-        if configs.make_thumbnails:
+        if configs.make_thumbnails and not get_board_has_dl_th(board):
             return
 
         for pid in thumb_pids:
+            if configs.make_thumbnails and pid in full_pids:
+                continue
+
             if pid not in pid_2_post:
                 configs.logger.info(f'[{board}] Post {pid} not found in pid_2_post, skipping thumbnail download')
                 continue

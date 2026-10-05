@@ -529,6 +529,42 @@ class TestGetPidsForDownload:
         assert full_pids == {1, 2}
         assert thumb_pids == set()
 
+    def test_thumbs_with_make_thumbnails(self, mock_fetcher, db, state, mock_configs):
+        mock_configs.make_thumbnails = True
+        mock_configs.boards['po'] = {'dl_fm_op': True, 'dl_fm_post': True, 'dl_th_op': True}
+        filter_obj = Filter(mock_fetcher, db, 'po', state)
+
+        tid_2_posts = {
+            1: [
+                {'no': 1, 'tim': '111', 'ext': '.jpg', 'md5': 'h1', 'sub': '', 'com': ''},
+                {'no': 2, 'tim': '222', 'ext': '.png', 'md5': 'h2', 'sub': '', 'com': ''},
+            ]
+        }
+        tid_2_thread = {1: {'no': 1}}
+
+        full_pids, thumb_pids = filter_obj.get_pids_for_download(tid_2_posts, tid_2_thread)
+
+        assert full_pids == {1, 2}
+        assert thumb_pids == set()
+
+    def test_thumbs_with_make_thumbnails_no_full_media(self, mock_fetcher, db, state, mock_configs):
+        mock_configs.make_thumbnails = True
+        mock_configs.boards['po'] = {'dl_th_op': True}
+        filter_obj = Filter(mock_fetcher, db, 'po', state)
+
+        tid_2_posts = {
+            1: [
+                {'no': 1, 'tim': '111', 'ext': '.jpg', 'md5': 'h1', 'sub': '', 'com': ''},
+                {'no': 2, 'tim': '222', 'ext': '.png', 'md5': 'h2', 'sub': '', 'com': ''},
+            ]
+        }
+        tid_2_thread = {1: {'no': 1}}
+
+        full_pids, thumb_pids = filter_obj.get_pids_for_download(tid_2_posts, tid_2_thread)
+
+        assert full_pids == set()
+        assert thumb_pids == {1}
+
     def test_missing_thread_entry_is_skipped(self, mock_fetcher, db, state, mock_configs):
         mock_configs.boards['po'] = {'dl_fm_post': True}
         filter_obj = Filter(mock_fetcher, db, 'po', state)
@@ -538,6 +574,27 @@ class TestGetPidsForDownload:
         full_pids, _ = filter_obj.get_pids_for_download(tid_2_posts, {})
 
         assert full_pids == set()
+
+    def test_download_media_for_ids_with_make_thumbnails(self, mock_fetcher, db, mock_configs, tmp_path, monkeypatch):
+        mock_configs.make_thumbnails = True
+        mock_configs.boards['po'] = {'dl_th_op': True}
+        mock_configs.url_full_media = 'https://i.4cdn.org/{board}/{image_id}{ext}'
+        mock_configs.url_thumbnail = 'https://i.4cdn.org/{board}/{image_id}s.jpg'
+        mock_configs.enforce_fsize_lte = False
+        mock_configs.enforce_md5_equality = False
+        media_fp = AsagiMediaFP(mock_fetcher, str(tmp_path), db, None)
+
+        post = {'no': 1, 'tim': '111', 'ext': '.jpg', 'md5': 'h1'}
+
+        fetch = Mock(return_value=b'data')
+        monkeypatch.setattr('media_fp.wrap_fetch_media_bytes', fetch)
+
+        media_fp.download_media_for_ids('po', {1: post}, set(), {1})
+
+        fetch.assert_called_once()
+        args, _ = fetch.call_args
+        assert args[1].startswith('https://i.4cdn.org/po/111s.jpg')
+        assert args[2] == '.jpg'
 
 
 class TestEnsureThumbnail:
