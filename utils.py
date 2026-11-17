@@ -275,7 +275,7 @@ ZeroOrOne = Annotated[int, msgspec.Meta(ge=0, le=1)]
 
 MultiplyMediaTim = Annotated[str, msgspec.Meta(pattern=r'^$|^\d+(?:-\d+)?$')]
 
-ExtLiteral = Literal['.jpg', '.jpeg', '.png', '.gif', '.pdf', '.svg', '.swf', '.mp4', '.mp3', '.webm', '.webp', 'deleted']
+ExtLiteral = Literal['.jpg', '.jpeg', '.bmp', '.png', '.gif', '.webp', '.svg', '.swf', '.pdf', '.djvu', '.epub', '.csv', '.txt', '.mp3', '.ogg', '.mp4', '.webm', 'deleted']
 
 StrLength32 = Annotated[str, msgspec.Meta(max_length=32)]
 StrLength512 = Annotated[str, msgspec.Meta(min_length=0, max_length=512)]
