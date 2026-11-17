@@ -242,11 +242,11 @@ ZeroOrOne = Annotated[int, msgspec.Meta(ge=0, le=1)]
 
 MultiplyMediaTim = Annotated[str, msgspec.Meta(pattern=r'^$|^\d+(?:-\d+)?$')]
 
-ExtLiteral = Literal['.jpg', '.jpeg', '.png', '.gif', '.pdf', '.swf', '.mp4', '.mp3', '.webm', '.webp', 'deleted']
+ExtLiteral = Literal['.jpg', '.jpeg', '.png', '.gif', '.pdf', '.svg', '.swf', '.mp4', '.mp3', '.webm', '.webp', 'deleted']
 
 StrLength32 = Annotated[str, msgspec.Meta(max_length=32)]
 StrLength512 = Annotated[str, msgspec.Meta(min_length=0, max_length=512)]
-StrLength16384 = Annotated[str, msgspec.Meta(min_length=0, max_length=16_384)]
+StrLength128000 = Annotated[str, msgspec.Meta(min_length=0, max_length=128_000)]
 
 
 class BasePost(msgspec.Struct, kw_only=True):
@@ -263,7 +263,7 @@ class BasePost(msgspec.Struct, kw_only=True):
     country: Annotated[str, msgspec.Meta(min_length=2, max_length=2)] | None = None
     country_name: StrLength512 | None = None
     sub: StrLength512 | None = None
-    com: StrLength16384 | None = None
+    com: StrLength128000 | None = None
     tim: PositiveInt | MultiplyMediaTim | None = None
     filename: StrLength512 | None = None
     ext: ExtLiteral | None = None
