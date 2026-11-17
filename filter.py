@@ -16,6 +16,10 @@ from utils import (
 )
 
 
+def get_board_has_dl_th(board: str) -> bool:
+    return any(configs.boards[board].get(k) for k in ('dl_th_op', 'dl_th_post', 'dl_th_thread'))
+
+
 class Filter:
     """
     - 'thread' are OP posts from the catalog, https://github.com/4chan/4chan-API/blob/master/pages/Catalog.md
@@ -119,6 +123,7 @@ class Filter:
         Returns `(full_pids, thumb_pids)` with post ids the configs request media for.
         """
         make_thumbnails = configs.make_thumbnails
+        board_has_dl_th = get_board_has_dl_th(self.board)
 
         dl_fm_op = configs.boards[self.board].get('dl_fm_op')
         dl_fm_post = configs.boards[self.board].get('dl_fm_post')
@@ -168,15 +173,27 @@ class Filter:
                     if is_ext_allowed(post.get('ext'), configs.full_media_exts):
                         full_pids.add(pid)
 
-                if (
-                    (should_dl_th_thread or self.is_media_needed_conf(post, pattern_or_bool_thumbs))
-                    and is_ext_allowed(post.get('ext'), configs.thumbnail_exts)
-                ):
-                    if (
-                        not make_thumbnails
-                        or (configs.download_unmakeable_thumbnails and not is_ext_allowed(post.get('ext'), supported_make_thumbnail_exts))
-                    ):
-                        thumb_pids.add(pid)
+                # do we care about downloading thumbs?
+                if not make_thumbnails or board_has_dl_th:
+
+                    # specific post filtering
+                    if should_dl_th_thread or self.is_media_needed_conf(post, pattern_or_bool_thumbs):
+
+                        thumb_makeable = is_ext_allowed(post.get('ext'), supported_make_thumbnail_exts)
+
+                        if make_thumbnails:
+                            # dont download thumbs if we will generate them from full media
+                            # unmakeable exts (pdf, djvu, txt) fall back to downloading
+                            should_add = (
+                                (not thumb_makeable and configs.download_unmakeable_thumbnails)
+                                or
+                                (thumb_makeable and pid not in full_pids)
+                            )
+                        else:
+                            should_add = True
+
+                        if should_add and is_ext_allowed(post.get('ext'), configs.thumbnail_exts):
+                            thumb_pids.add(pid)
 
         return full_pids, thumb_pids
 
