@@ -291,9 +291,30 @@ class TestFilter:
     def test_should_archive_min_chars(self, mock_fetcher, db, state, mock_configs):
         mock_configs.boards['po'] = {'op_comment_min_chars': 10}
         filter_obj = Filter(mock_fetcher, db, 'po', state)
-        
+
         assert not filter_obj.should_archive('', 'short')
         assert filter_obj.should_archive('', 'this is long enough')
+
+    def test_should_archive_subject_only_falls_back_to_subject(self, mock_fetcher, db, state, mock_configs):
+        mock_configs.boards['po'] = {'op_comment_min_chars': 10, 'whitelist': 'origami|paper'}
+        filter_obj = Filter(mock_fetcher, db, 'po', state)
+
+        assert filter_obj.should_archive('origami discussion thread', '')
+        assert not filter_obj.should_archive('short', '')
+
+    def test_should_archive_min_unique_subject_only_falls_back_to_subject(self, mock_fetcher, db, state, mock_configs):
+        mock_configs.boards['po'] = {'op_comment_min_chars_unique': 5}
+        filter_obj = Filter(mock_fetcher, db, 'po', state)
+
+        assert filter_obj.should_archive('abcdef subject', '')
+        assert not filter_obj.should_archive('aaaa', '')
+
+    def test_should_archive_comment_only_falls_back_to_comment(self, mock_fetcher, db, state, mock_configs):
+        mock_configs.boards['po'] = {'op_comment_min_chars': 10, 'whitelist': 'origami|paper'}
+        filter_obj = Filter(mock_fetcher, db, 'po', state)
+
+        assert filter_obj.should_archive('', 'long enough origami thread')
+        assert not filter_obj.should_archive('', 'short')
 
     def test_should_archive_min_unique_chars(self, mock_fetcher, db, state, mock_configs):
         mock_configs.boards['po'] = {'op_comment_min_chars_unique': 5}

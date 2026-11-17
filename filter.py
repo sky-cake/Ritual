@@ -73,12 +73,15 @@ class Filter:
         - If only a whitelist is specified, archive whitelisted posts, and skip everything else.
         - If no lists are specified, archive everything.
         """
+        # subject-only threads fall back to the subject so the regex filters still get a chance to run
+        filter_len_text = comment if comment else subject
+
         op_comment_min_chars = configs.boards[self.board].get('op_comment_min_chars')
-        if op_comment_min_chars and len(comment) < op_comment_min_chars:
+        if op_comment_min_chars and len(filter_len_text) < op_comment_min_chars:
             return False
 
         op_comment_min_chars_unique = configs.boards[self.board].get('op_comment_min_chars_unique')
-        if op_comment_min_chars_unique and len(set(comment)) < op_comment_min_chars_unique:
+        if op_comment_min_chars_unique and len(set(filter_len_text)) < op_comment_min_chars_unique:
             return False
 
         blacklist_post_filter = configs.boards[self.board].get('blacklist') if blacklist is None else blacklist

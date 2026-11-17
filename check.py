@@ -26,12 +26,14 @@ def make_post(no: int, subject: str, comment: str) -> dict:
 def archive_reason(board: str, subject: str, comment: str) -> str | None:
     board_cfg = configs.boards[board]
 
+    filter_len_text = comment if comment else subject
+
     min_chars = board_cfg.get('op_comment_min_chars')
-    if min_chars and len(comment) < min_chars:
+    if min_chars and len(filter_len_text) < min_chars:
         return 'min_chars'
 
     min_unique = board_cfg.get('op_comment_min_chars_unique')
-    if min_unique and len(set(comment)) < min_unique:
+    if min_unique and len(set(filter_len_text)) < min_unique:
         return 'min_unique'
 
     blacklist = board_cfg.get('blacklist')
