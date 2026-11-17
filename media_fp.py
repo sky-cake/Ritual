@@ -18,7 +18,15 @@ from utils import (
     log_util,
     makedir_p,
     normalize_ext,
+    supported_make_thumbnail_exts,
 )
+
+
+def get_board_has_dl_th(board: str) -> bool:
+    return any(
+        configs.boards[board].get(key) is not None
+        for key in ('dl_th_op', 'dl_th_post', 'dl_th_thread')
+    )
 
 
 def wrap_fetch_media_bytes(session: Session, url: str, ext: str) -> bytes | None:
@@ -230,6 +238,11 @@ class MediaFP(ABC):
                 continue
 
             post = pid_2_post[pid]
+
+            # dont download thumbs if we will generate them from full media
+            if configs.make_thumbnails and pid in full_pids and is_ext_allowed(post.get('ext'), supported_make_thumbnail_exts):
+                continue
+
             url = get_media_url(configs.url_thumbnail, board, post, MediaType.thumbnail)
             self.download_thumbnail(url, post, board)
 

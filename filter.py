@@ -4,7 +4,7 @@ import configs
 from catalog import Catalog
 from db.ritual import RitualDb
 from fetcher import Fetcher
-from media_fp import MediaFP
+from media_fp import MediaFP, get_board_has_dl_th
 from state import State
 from utils import (
     db_row_to_media_post,
@@ -14,10 +14,6 @@ from utils import (
     supported_make_thumbnail_exts,
     post_has_file,
 )
-
-
-def get_board_has_dl_th(board: str) -> bool:
-    return any(configs.boards[board].get(k) for k in ('dl_th_op', 'dl_th_post', 'dl_th_thread'))
 
 
 class Filter:
