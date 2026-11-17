@@ -34,12 +34,13 @@ enforce_fsize_upper_limit = False
 
 
 # file extensions to download for full media
-full_media_exts = {'.jpg', '.jpeg', '.bmp', '.gif', '.png', '.svg', '.ogg', '.mp3', '.webm', '.pdf', '.djvu', '.epub', '.csv', '.txt'}
+full_media_exts = {'.jpg', '.jpeg', '.bmp', '.gif', '.png', '.svg', '.ogg', '.mp3', '.webm', '.mp4', '.pdf', '.djvu', '.epub', '.csv', '.txt'}
 
 
-# file extensions with thumbnails, and should be downloaded
+# file extensions that support thumbnails, and should be downloaded
+# note: the thumbnail itself is always a .jpg, these are the full media extensions the thumbnails can belong to
 # note: thumbnails can only be created for: jpg, jpeg, png, webp, bmp, gif, webm, mp4
-thumbnail_exts = {'.jpg', '.jpeg', '.bmp', '.gif', '.png', '.svg', '.webm', '.pdf', '.djvu', '.txt'}
+thumbnail_exts = {'.jpg', '.jpeg', '.bmp', '.gif', '.png', '.svg', '.webm', '.mp4', '.pdf', '.djvu', '.txt'}
 
 # download thumbnails for (pdf, djvu, txt) when `make_thumbnail = True`?
 download_unmakeable_thumbnails = True

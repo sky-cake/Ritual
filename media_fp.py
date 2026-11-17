@@ -22,6 +22,9 @@ from utils import (
 )
 
 
+JPEG_MAGIC_BYTES = b'\xff\xd8'
+
+
 def get_board_has_dl_th(board: str) -> bool:
     return any(
         configs.boards[board].get(key) is not None
@@ -149,6 +152,11 @@ class MediaFP(ABC):
         if configs.enforce_fsize_lte and (fsize_api := post.get('fsize')):
             if fsize_computed > fsize_api:
                 log_util(configs.logger, f'Not saving: {url=} - {fsize_computed=} > {fsize_api=}')
+                return False
+
+        if media_type == MediaType.thumbnail:
+            if not content.startswith(JPEG_MAGIC_BYTES):
+                log_util(configs.logger, f'Not saving: {url=} - thumbnail content is not a jpg')
                 return False
 
         if media_type == MediaType.full_media:

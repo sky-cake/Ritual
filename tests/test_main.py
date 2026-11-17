@@ -364,6 +364,26 @@ class TestDownloadSkipsFalsyExt:
         fetch.assert_not_called()
 
 
+class TestThumbnailJpgValidation:
+    def make_media_fp(self, mock_fetcher, db, mock_configs):
+        mock_configs.enforce_fsize_lte = False
+        mock_configs.enforce_md5_equality = False
+        return AsagiMediaFP(mock_fetcher, mock_configs.media_save_path, db, None)
+
+    def test_non_jpg_thumbnail_rejected(self, mock_fetcher, db, mock_configs):
+        media_fp = self.make_media_fp(mock_fetcher, db, mock_configs)
+        post = {'tim': 123456}
+
+        assert media_fp.should_write_to_disk('http://example.com/1s.jpg', post, MediaType.thumbnail, b'GIF89a\x01\x02') is False
+        assert media_fp.should_write_to_disk('http://example.com/1s.jpg', post, MediaType.thumbnail, b'<?xml') is False
+
+    def test_jpg_thumbnail_accepted(self, mock_fetcher, db, mock_configs):
+        media_fp = self.make_media_fp(mock_fetcher, db, mock_configs)
+        post = {'tim': 123456}
+
+        assert media_fp.should_write_to_disk('http://example.com/1s.jpg', post, MediaType.thumbnail, b'\xff\xd8\xff\xe0data') is True
+
+
 class TestDownloadUnmakeableThumbnails:
     def test_fallback_downloads_when_make_thumbnails(self, mock_fetcher, db, mock_configs, monkeypatch):
         mock_configs.make_thumbnails = True
