@@ -33,6 +33,18 @@ fsize_upper_limit = 10_485_760
 enforce_fsize_upper_limit = False
 
 
+# file extensions to download for full media
+full_media_exts = {'.jpg', '.jpeg', '.bmp', '.gif', '.png', '.svg', '.ogg', '.mp3', '.webm', '.pdf', '.djvu', '.epub', '.csv', '.txt'}
+
+
+# file extensions with thumbnails, and should be downloaded
+# note: thumbnails can only be created for: jpg, jpeg, png, webp, bmp, gif, webm, mp4
+thumbnail_exts = {'.jpg', '.jpeg', '.bmp', '.gif', '.png', '.svg', '.webm', '.pdf', '.djvu', '.txt'}
+
+# download thumbnails for (pdf, djvu, txt) when `make_thumbnail = True`?
+download_unmakeable_thumbnails = True
+
+
 # specify an absolute root path
 media_save_path = 'media'
 

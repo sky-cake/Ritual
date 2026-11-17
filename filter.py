@@ -10,6 +10,8 @@ from utils import (
     db_row_to_media_post,
     extract_text_from_html,
     fullmatch_sub_and_com,
+    is_ext_allowed,
+    supported_make_thumbnail_exts,
     post_has_file,
 )
 
@@ -163,10 +165,17 @@ class Filter:
                     pattern_or_bool_thumbs = dl_th_post
 
                 if should_dl_fm_thread or self.is_media_needed_conf(post, pattern_or_bool_full_media):
-                    full_pids.add(pid)
+                    if is_ext_allowed(post.get('ext'), configs.full_media_exts):
+                        full_pids.add(pid)
 
-                if not make_thumbnails:
-                    if should_dl_th_thread or self.is_media_needed_conf(post, pattern_or_bool_thumbs):
+                if (
+                    (should_dl_th_thread or self.is_media_needed_conf(post, pattern_or_bool_thumbs))
+                    and is_ext_allowed(post.get('ext'), configs.thumbnail_exts)
+                ):
+                    if (
+                        not make_thumbnails
+                        or (configs.download_unmakeable_thumbnails and not is_ext_allowed(post.get('ext'), supported_make_thumbnail_exts))
+                    ):
                         thumb_pids.add(pid)
 
         return full_pids, thumb_pids

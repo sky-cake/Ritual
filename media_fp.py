@@ -14,10 +14,10 @@ from utils import (
     sleep,
     get_md5_b64_hash,
     get_fs_safe_b64,
-    is_post_media_file_image,
-    is_post_media_file_video,
+    is_ext_allowed,
     log_util,
     makedir_p,
+    normalize_ext,
 )
 
 
@@ -102,7 +102,7 @@ class MediaFP(ABC):
         if not configs.make_thumbnails:
             return
 
-        if not (is_post_media_file_image(post) or is_post_media_file_video(post)):
+        if not is_ext_allowed(post.get('ext'), configs.thumbnail_exts):
             return
 
         dirpath, filename = self.get_dirpath_and_filename(board, MediaType.full_media, post)
@@ -115,7 +115,6 @@ class MediaFP(ABC):
         if os.path.isfile(filepath_thumb):
             return
 
-        makedir_p(dirpath_thumb)
         create_thumbnail(
             post,
             filepath,
@@ -158,6 +157,10 @@ class MediaFP(ABC):
 
 
     def download_full_media(self, url: str, post: dict, board: str):
+        if not normalize_ext(post.get('ext')):
+            configs.logger.warning(f'[{board}] Post {post.get("no")} has no file extension, skipping full media download')
+            return
+
         dirpath, filename = self.get_dirpath_and_filename(board, MediaType.full_media, post)
         filepath = os.path.join(dirpath, filename)
 
@@ -215,7 +218,10 @@ class MediaFP(ABC):
             url = get_media_url(configs.url_full_media, board, post, MediaType.full_media)
             self.download_full_media(url, post, board)
 
-        if configs.make_thumbnails:
+        if not configs.url_thumbnail:
+            return
+
+        if configs.make_thumbnails and not thumb_pids:
             return
 
         for pid in thumb_pids:

@@ -12,6 +12,7 @@ import string
 import subprocess
 import time
 from collections import OrderedDict
+from functools import lru_cache
 from logging.handlers import RotatingFileHandler
 from typing import Annotated, Literal
 
@@ -140,12 +141,35 @@ def post_has_file(post: dict) -> bool:
     return all(post.get(k) for k in post_has_file_keys)
 
 
+def normalize_ext(ext: str | None) -> str:
+    return (ext or '').lower().lstrip('.')
+
+
+def normalize_exts(allowed_exts: set[str] | None) -> frozenset[str]:
+    if not allowed_exts:
+        return frozenset()
+
+    return frozenset(ne for e in allowed_exts if (ne := normalize_ext(e)))
+
+
+@lru_cache()
+def is_ext_allowed(ext: str | None, allowed_exts: frozenset[str] | None) -> bool:
+    if not allowed_exts:
+        return True
+
+    return normalize_ext(ext) in allowed_exts
+
+
 def db_row_to_media_post(row: dict) -> dict | None:
     media_orig = row.get('media_orig') or ''
     if '.' not in media_orig:
         return None
 
     tim, ext = media_orig.rsplit('.', maxsplit=1)
+
+    if not ext:
+        return None
+
     return {
         'no': row.get('num'),
         'resto': 0 if row.get('op') else row.get('thread_num'),
@@ -158,7 +182,16 @@ def db_row_to_media_post(row: dict) -> dict | None:
     }
 
 
+supported_exts = frozenset({'jpg', 'jpeg', 'bmp', 'gif', 'png', 'svg', 'ogg', 'mp3', 'webm', 'mp4', 'webp', 'pdf', 'djvu', 'epub', 'csv', 'txt'})
+supported_make_thumbnail_exts = frozenset({'jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif', 'webm', 'mp4'})
+
+
 def create_thumbnail(post: dict, full_path: str, thumb_path: str, logger=None):
+    if not is_ext_allowed(post.get('ext'), supported_make_thumbnail_exts):
+        return
+
+    makedir_p(os.path.dirname(thumb_path))
+
     if is_post_media_file_video(post):
         create_thumbnail_from_video(full_path, thumb_path, logger=logger)
         return
