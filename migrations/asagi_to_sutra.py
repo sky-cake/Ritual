@@ -160,11 +160,11 @@ def migrate(boards: list[str], db_path_scanner: str, db_path_ritual: str, root_a
 
 
 if __name__ == '__main__':
-    db_path_ritual = '/home/dolphin/Downloads/ritual_backup.db'
-    db_path_scanner='/home/dolphin/Documents/code/ritual/scanner/scanner.db'
-    root_asagi='/home/dolphin/Documents/code/ritual/media'
-    root_sutra='/home/dolphin/Documents/code/ritual/media_sutra'
-    
+    db_path_ritual = ''
+    db_path_scanner = ''
+    root_asagi = ''
+    root_sutra = ''
+
     print('Checking which boards exist in ritual database...')
     boards = get_valid_boards(db_path_ritual)
     

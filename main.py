@@ -123,6 +123,7 @@ def main():
     fetcher = Fetcher(state)
 
     scanner_db = ScannerDb(configs.scanner_db_path) if configs.scanner_db_enabled else None
+    scanner_db.init_db()
 
     media_fp = get_media_fp(fetcher, ritual_db, scanner_db)
 

@@ -1,3 +1,4 @@
+from ast import arg
 import os
 from itertools import batched
 from functools import lru_cache
@@ -6,11 +7,12 @@ import time
 import argparse
 
 
-def get_root_path_from_args() -> str:
+def get_args() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument('--root')
+    parser.add_argument('--db')
     args = parser.parse_args()
-    return args.root
+    return args
 
 
 def get_placeholders(l: list) -> str:
@@ -36,8 +38,7 @@ class SqliteDb:
 class ScannerDb(SqliteDb):
     def __init__(self, db_path: str):
         if not db_path:
-            db_path = make_path('scanner.db')
-            print(f'Using default ScannerDb.db_path: {db_path}')
+            ValueError(f'ScannerDb.db_path not set!')
         super().__init__(db_path)
 
     def init_db(self):
@@ -178,8 +179,8 @@ def iter_media_files_fast(root_path: str, valid_exts: set[str] | None=None):
 
 
 class ScannerConfig:
-    db_path: str = '' # default is ./scanner.db
-    root_path: str = '/mnt/dl'
+    db_path: str = ''
+    root_path: str = ''
     file_exts: str = 'jpeg,jpg,png,gif' # comma separated, no dot in .ext
 
     skip_dirnames: set[str] = set()
@@ -230,18 +231,25 @@ def gather_filesystem(db: ScannerDb, conf: ScannerConfig, batch_size: int=5_000)
 
 if __name__ == '__main__':
     conf = ScannerConfig()
-    conf.root_path = get_root_path_from_args() or conf.root_path
 
-    assert conf.root_path
-    assert os.path.isdir(conf.root_path), conf.root_path
-    print(f'scanning: "{conf.root_path}" for {conf.file_exts}')
+    args = get_args()
+    conf.root_path = args.root or conf.root_path
+    conf.db_path = args.db or conf.db_path
+
+    assert conf.db_path
+    print(f'scanner db path: {conf.db_path}')
 
     db = None
     try:
         db = ScannerDb(conf.db_path)
         db.connect()
         db.init_db()
+
+        assert conf.root_path
+        assert os.path.isdir(conf.root_path), conf.root_path
+        print(f'scanning: "{conf.root_path}" for {conf.file_exts}')
         gather_filesystem(db, conf)
+
     finally:
         if db:
             db.conn.commit()

@@ -63,8 +63,7 @@ media_fp = 'asagi' # 'asagi' or 'sutra'
 # This is useful for quickly seeing which files you have, rather than scanning your filesystem frequently.
 scanner_db_enabled = False
 
-# By default, scanner.db is at ./scanner/scanner.db
-scanner_db_path = '' # '/path/to/scanner.db'
+scanner_db_path = '' # 'path/to/scanner.db'
 
 # if you only have one root directory, and your use Sutra, set this to False
 save_directories_in_db = False
