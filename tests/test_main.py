@@ -62,7 +62,6 @@ def mock_configs(monkeypatch):
         boards_with_archive=[],
         use_http_cache_first_loop=False,
         ensure_media_downloaded=True,
-        download_media_first_loop=True,
         make_thumbnails=False,
         download_unmakeable_thumbnails=False,
         full_media_exts=None,

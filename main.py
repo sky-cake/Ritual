@@ -82,17 +82,14 @@ def process_board(board: str, db: RitualDb, fetcher: Fetcher, loop: Loop, state:
     if configs.boards[board].get('thread_text') != False:
         posts.save_posts()
 
-    if loop.is_first_loop and not configs.download_media_first_loop:
-        configs.logger.info(f'[{board}] Skipping media downloads on the first loop')
-    else:
-        full_pids, thumb_pids = filter.get_pids_for_download(posts.tid_2_posts, filter.tid_2_thread)
+    full_pids, thumb_pids = filter.get_pids_for_download(posts.tid_2_posts, filter.tid_2_thread)
 
-        media_fp.download_media_for_ids(board, posts.pid_2_post, full_pids, thumb_pids)
+    media_fp.download_media_for_ids(board, posts.pid_2_post, full_pids, thumb_pids)
 
-        media_fp.flush(board)
+    media_fp.flush(board)
 
-        if loop.is_first_loop and configs.ensure_media_downloaded:
-            filter.ensure_media_downloaded(media_fp, catalog)
+    if loop.is_first_loop and configs.ensure_media_downloaded:
+        filter.ensure_media_downloaded(media_fp, catalog)
 
     loop.set_board_duration_minutes(board)
 
