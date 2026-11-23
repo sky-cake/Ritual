@@ -1,6 +1,6 @@
 # Ritual
 
-Ritual is a 4chan archiver that focuses on simplicity.
+Ritual is a 4chan/vichan archiver that focuses on simplicity and filtering.
 
 Notable features include,
 

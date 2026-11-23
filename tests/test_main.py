@@ -16,14 +16,44 @@ from media_fp import AsagiMediaFP
 from posts import Posts
 from state import State
 from tests.conftest import create_test_sqlite_db
-from utils import db_row_to_media_post, fetch_media_bytes
+from utils import db_row_to_media_post, fetch_media_bytes, is_ext_allowed, normalize_ext, normalize_exts
+
+
+class TestExtUtils:
+    def test_normalize_ext(self):
+        assert normalize_ext('.jpg') == 'jpg'
+        assert normalize_ext('JPG') == 'jpg'
+        assert normalize_ext('..webm') == 'webm'
+        assert normalize_ext(None) == ''
+        assert normalize_ext('') == ''
+        assert normalize_ext('...') == ''
+
+    def test_normalize_exts(self):
+        assert normalize_exts({'.jpg', 'PNG', '.WebM'}) == {'jpg', 'png', 'webm'}
+        assert normalize_exts({'..mp4'}) == {'mp4'}
+        assert normalize_exts(set()) == set()
+        assert normalize_exts(None) == set()
+        assert normalize_exts({'.', ''}) == set()
+
+    def test_is_ext_allowed(self):
+        allowed = normalize_exts({'.jpg', 'PNG'})
+
+        assert is_ext_allowed('.jpg', allowed)
+        assert is_ext_allowed('JPG', allowed)
+        assert is_ext_allowed('.png', allowed)
+        assert not is_ext_allowed('.webm', allowed)
+
+        assert is_ext_allowed('.webm', None)
+        assert is_ext_allowed('.webm', frozenset())
 
 
 @pytest.fixture
-def mock_configs(monkeypatch, tmp_path):
+def mock_configs(monkeypatch):
     cfg = SimpleNamespace(
         url_catalog='https://a.4cdn.org/{board}/catalog.json',
         url_thread='https://a.4cdn.org/{board}/thread/{thread_id}.json',
+        url_full_media='https://a.4cdn.org/{board}/{image_id}{ext}',
+        url_thumbnail='https://a.4cdn.org/{board}/{image_id}s.jpg',
         headers={},
         request_cooldown_sec=0,
         add_random=False,
@@ -34,7 +64,10 @@ def mock_configs(monkeypatch, tmp_path):
         ensure_media_downloaded=True,
         download_media_first_loop=True,
         make_thumbnails=False,
-        media_save_path=str(tmp_path),
+        download_unmakeable_thumbnails=False,
+        full_media_exts=None,
+        thumbnail_exts=None,
+        media_save_path='unused_media',
         db_type='sqlite',
         db_path=':memory:',
         unescape_data_b4_db_write=True,
@@ -75,8 +108,8 @@ def loop(mock_configs):
 
 
 @pytest.fixture
-def state(loop, tmp_path, monkeypatch):
-    monkeypatch.setattr('state.make_path', lambda *parts: str(tmp_path.joinpath(*parts)))
+def state(loop, monkeypatch):
+    monkeypatch.setattr('state.make_path', lambda *parts: os.path.join('unused_cache', *parts))
     return State(loop)
 
 
@@ -199,17 +232,11 @@ class TestState:
         
         assert len(state.thread_cache[board]) <= 200
 
-    def test_get_cached_thread_cache(self, state, tmp_path, monkeypatch):
-        cache_file = tmp_path / 'cache.json'
-        cache_file.parent.mkdir(parents=True, exist_ok=True)
-        
-        test_data = {'po': {'1': 100, '2': 200}}
-        with open(cache_file, 'w') as f:
-            json.dump(test_data, f)
-        
-        state.thread_cache_filepath = str(cache_file)
+    def test_get_cached_thread_cache(self, state, monkeypatch):
+        monkeypatch.setattr('state.read_json', lambda fpath: {'po': {'1': 100, '2': 200}})
+
         result = state.get_cached_thread_cache()
-        
+
         assert result['po'][1] == 100
         assert result['po'][2] == 200
 
@@ -265,9 +292,30 @@ class TestFilter:
     def test_should_archive_min_chars(self, mock_fetcher, db, state, mock_configs):
         mock_configs.boards['po'] = {'op_comment_min_chars': 10}
         filter_obj = Filter(mock_fetcher, db, 'po', state)
-        
+
         assert not filter_obj.should_archive('', 'short')
         assert filter_obj.should_archive('', 'this is long enough')
+
+    def test_should_archive_subject_only_falls_back_to_subject(self, mock_fetcher, db, state, mock_configs):
+        mock_configs.boards['po'] = {'op_comment_min_chars': 10, 'whitelist': 'origami|paper'}
+        filter_obj = Filter(mock_fetcher, db, 'po', state)
+
+        assert filter_obj.should_archive('origami discussion thread', '')
+        assert not filter_obj.should_archive('short', '')
+
+    def test_should_archive_min_unique_subject_only_falls_back_to_subject(self, mock_fetcher, db, state, mock_configs):
+        mock_configs.boards['po'] = {'op_comment_min_chars_unique': 5}
+        filter_obj = Filter(mock_fetcher, db, 'po', state)
+
+        assert filter_obj.should_archive('abcdef subject', '')
+        assert not filter_obj.should_archive('aaaa', '')
+
+    def test_should_archive_comment_only_falls_back_to_comment(self, mock_fetcher, db, state, mock_configs):
+        mock_configs.boards['po'] = {'op_comment_min_chars': 10, 'whitelist': 'origami|paper'}
+        filter_obj = Filter(mock_fetcher, db, 'po', state)
+
+        assert filter_obj.should_archive('', 'long enough origami thread')
+        assert not filter_obj.should_archive('', 'short')
 
     def test_should_archive_min_unique_chars(self, mock_fetcher, db, state, mock_configs):
         mock_configs.boards['po'] = {'op_comment_min_chars_unique': 5}
@@ -293,37 +341,106 @@ class TestFilter:
 
 
 class TestDownloadSkipsExisting:
-    def test_download_full_media_skips_existing_file(self, mock_fetcher, db, mock_configs, tmp_path, monkeypatch):
-        media_fp = AsagiMediaFP(mock_fetcher, str(tmp_path), db, None)
+    def test_download_full_media_skips_existing_file(self, mock_fetcher, db, mock_configs, monkeypatch):
+        media_fp = AsagiMediaFP(mock_fetcher, mock_configs.media_save_path, db, None)
         post = {'tim': 123456, 'ext': '.jpg', 'md5': 'h1'}
 
         dirpath, filename = media_fp.get_dirpath_and_filename('po', MediaType.full_media, post)
-        os.makedirs(dirpath, exist_ok=True)
-        with open(os.path.join(dirpath, filename), 'wb') as f:
-            f.write(b'data')
+        filepath = os.path.join(dirpath, filename)
 
         fetch = Mock()
         monkeypatch.setattr('media_fp.wrap_fetch_media_bytes', fetch)
+        monkeypatch.setattr('media_fp.os.path.isfile', lambda p: p == filepath)
 
         media_fp.download_full_media('http://example.com/123456.jpg', post, 'po')
 
         fetch.assert_not_called()
 
-    def test_download_thumbnail_skips_existing_file(self, mock_fetcher, db, mock_configs, tmp_path, monkeypatch):
-        media_fp = AsagiMediaFP(mock_fetcher, str(tmp_path), db, None)
+    def test_download_thumbnail_skips_existing_file(self, mock_fetcher, db, mock_configs, monkeypatch):
+        media_fp = AsagiMediaFP(mock_fetcher, mock_configs.media_save_path, db, None)
         post = {'tim': 123456, 'ext': '.jpg', 'md5': 'h1'}
 
         dirpath, filename = media_fp.get_dirpath_and_filename('po', MediaType.thumbnail, post)
-        os.makedirs(dirpath, exist_ok=True)
-        with open(os.path.join(dirpath, filename), 'wb') as f:
-            f.write(b'data')
+        filepath = os.path.join(dirpath, filename)
 
         fetch = Mock()
         monkeypatch.setattr('media_fp.wrap_fetch_media_bytes', fetch)
+        monkeypatch.setattr('media_fp.os.path.isfile', lambda p: p == filepath)
 
         media_fp.download_thumbnail('http://example.com/123456s.jpg', post, 'po')
 
         fetch.assert_not_called()
+
+
+class TestDownloadSkipsFalsyExt:
+    def test_download_full_media_skips_falsy_ext(self, mock_fetcher, db, mock_configs, monkeypatch):
+        media_fp = AsagiMediaFP(mock_fetcher, mock_configs.media_save_path, db, None)
+
+        fetch = Mock()
+        monkeypatch.setattr('media_fp.wrap_fetch_media_bytes', fetch)
+
+        for ext in (None, '', '.', '...'):
+            post = {'tim': 123456, 'ext': ext, 'md5': 'h1'}
+            media_fp.download_full_media('http://example.com/123456.jpg', post, 'po')
+
+        fetch.assert_not_called()
+
+
+class TestThumbnailJpgValidation:
+    def make_media_fp(self, mock_fetcher, db, mock_configs):
+        mock_configs.enforce_fsize_lte = False
+        mock_configs.enforce_md5_equality = False
+        return AsagiMediaFP(mock_fetcher, mock_configs.media_save_path, db, None)
+
+    def test_non_jpg_thumbnail_rejected(self, mock_fetcher, db, mock_configs):
+        media_fp = self.make_media_fp(mock_fetcher, db, mock_configs)
+        post = {'tim': 123456}
+
+        assert media_fp.should_write_to_disk('http://example.com/1s.jpg', post, MediaType.thumbnail, b'GIF89a\x01\x02') is False
+        assert media_fp.should_write_to_disk('http://example.com/1s.jpg', post, MediaType.thumbnail, b'<?xml') is False
+
+    def test_jpg_thumbnail_accepted(self, mock_fetcher, db, mock_configs):
+        media_fp = self.make_media_fp(mock_fetcher, db, mock_configs)
+        post = {'tim': 123456}
+
+        assert media_fp.should_write_to_disk('http://example.com/1s.jpg', post, MediaType.thumbnail, b'\xff\xd8\xff\xe0data') is True
+
+
+class TestDownloadUnmakeableThumbnails:
+    def test_fallback_downloads_when_make_thumbnails(self, mock_fetcher, db, mock_configs, monkeypatch):
+        mock_configs.make_thumbnails = True
+        mock_configs.download_unmakeable_thumbnails = True
+        mock_configs.thumbnail_exts = normalize_exts({'.jpg', '.pdf'})
+        media_fp = AsagiMediaFP(mock_fetcher, mock_configs.media_save_path, db, None)
+
+        dirpath, filename = media_fp.get_dirpath_and_filename('po', MediaType.full_media, {'tim': '222', 'ext': '.pdf', 'md5': 'h2'})
+        monkeypatch.setattr('media_fp.os.path.isfile', lambda p: p == os.path.join(dirpath, filename))
+
+        thumb_calls = []
+        monkeypatch.setattr(media_fp, 'download_thumbnail', lambda *a, **k: thumb_calls.append(a))
+
+        posts = {2: {'no': 2, 'tim': '222', 'ext': '.pdf', 'md5': 'h2'}}
+        media_fp.download_media_for_ids('po', posts, full_pids={2}, thumb_pids={2})
+
+        assert len(thumb_calls) == 1
+
+    def test_no_fallback_when_thumb_pids_empty(self, mock_fetcher, db, mock_configs, monkeypatch):
+        mock_configs.make_thumbnails = True
+        mock_configs.download_unmakeable_thumbnails = True
+        mock_configs.thumbnail_exts = normalize_exts({'.jpg', '.pdf'})
+        media_fp = AsagiMediaFP(mock_fetcher, mock_configs.media_save_path, db, None)
+
+        dirpath, filename = media_fp.get_dirpath_and_filename('po', MediaType.full_media, {'tim': '222', 'ext': '.jpg', 'md5': 'h2'})
+        monkeypatch.setattr('media_fp.os.path.isfile', lambda p: p == os.path.join(dirpath, filename))
+        monkeypatch.setattr('media_fp.create_thumbnail', lambda *a, **k: None)
+
+        thumb_calls = []
+        monkeypatch.setattr(media_fp, 'download_thumbnail', lambda *a, **k: thumb_calls.append(a))
+
+        posts = {2: {'no': 2, 'tim': '222', 'ext': '.jpg', 'md5': 'h2'}}
+        media_fp.download_media_for_ids('po', posts, full_pids={2}, thumb_pids=set())
+
+        assert thumb_calls == []
 
 
 class TestPosts:
@@ -495,6 +612,9 @@ class TestDbRowToMediaPost:
         assert db_row_to_media_post({'media_orig': 'deleted'}) is None
         assert db_row_to_media_post({'media_orig': None}) is None
 
+    def test_falsy_ext_returns_none(self):
+        assert db_row_to_media_post({'media_orig': '1234567890.'}) is None
+
 
 class TestGetPostsForTids:
     def test_groups_by_thread_and_excludes_deleted(self, db):
@@ -576,19 +696,114 @@ class TestGetPidsForDownload:
 
         assert full_pids == set()
 
-    def test_download_media_for_ids_with_make_thumbnails(self, mock_fetcher, db, mock_configs, tmp_path, monkeypatch):
+    def test_full_media_ext_filter(self, mock_fetcher, db, state, mock_configs):
+        mock_configs.boards['po'] = {'dl_fm_op': True, 'dl_fm_post': True}
+        mock_configs.full_media_exts = normalize_exts({'.jpg', 'PNG'})
+        filter_obj = Filter(mock_fetcher, db, 'po', state)
+
+        tid_2_posts = {
+            1: [
+                {'no': 1, 'tim': '111', 'ext': '.jpg', 'md5': 'h1', 'sub': '', 'com': ''},
+                {'no': 2, 'tim': '222', 'ext': '.png', 'md5': 'h2', 'sub': '', 'com': ''},
+                {'no': 3, 'tim': '333', 'ext': '.webm', 'md5': 'h3', 'sub': '', 'com': ''},
+            ]
+        }
+        tid_2_thread = {1: {'no': 1}}
+
+        full_pids, thumb_pids = filter_obj.get_pids_for_download(tid_2_posts, tid_2_thread)
+
+        assert full_pids == {1, 2}
+        assert thumb_pids == set()
+
+    def test_full_media_ext_filter_none_allows_all(self, mock_fetcher, db, state, mock_configs):
+        mock_configs.boards['po'] = {'dl_fm_op': True, 'dl_fm_post': True}
+        mock_configs.full_media_exts = None
+        filter_obj = Filter(mock_fetcher, db, 'po', state)
+
+        tid_2_posts = {
+            1: [
+                {'no': 1, 'tim': '111', 'ext': '.jpg', 'md5': 'h1', 'sub': '', 'com': ''},
+                {'no': 2, 'tim': '222', 'ext': '.webm', 'md5': 'h2', 'sub': '', 'com': ''},
+            ]
+        }
+        tid_2_thread = {1: {'no': 1}}
+
+        full_pids, _ = filter_obj.get_pids_for_download(tid_2_posts, tid_2_thread)
+
+        assert full_pids == {1, 2}
+
+    def test_thumbnail_ext_filter(self, mock_fetcher, db, state, mock_configs):
+        mock_configs.boards['po'] = {'dl_fm_op': True, 'dl_fm_post': True, 'dl_th_op': True}
+        mock_configs.full_media_exts = None
+        mock_configs.thumbnail_exts = normalize_exts({'.jpg', '.webm'})
+        filter_obj = Filter(mock_fetcher, db, 'po', state)
+
+        tid_2_posts = {
+            1: [
+                {'no': 1, 'tim': '111', 'ext': '.jpg', 'md5': 'h1', 'sub': '', 'com': ''},
+                {'no': 2, 'tim': '222', 'ext': '.mp3', 'md5': 'h2', 'sub': '', 'com': ''},
+            ]
+        }
+        tid_2_thread = {1: {'no': 1}}
+
+        full_pids, thumb_pids = filter_obj.get_pids_for_download(tid_2_posts, tid_2_thread)
+
+        assert full_pids == {1, 2}
+        assert thumb_pids == {1}
+
+    def test_unmakeable_thumbs_downloaded_when_make_thumbnails(self, mock_fetcher, db, state, mock_configs):
+        mock_configs.boards['po'] = {'dl_fm_op': True, 'dl_fm_post': True, 'dl_th_op': True, 'dl_th_post': True}
+        mock_configs.make_thumbnails = True
+        mock_configs.download_unmakeable_thumbnails = True
+        mock_configs.thumbnail_exts = normalize_exts({'.jpg', '.pdf'})
+        filter_obj = Filter(mock_fetcher, db, 'po', state)
+
+        tid_2_posts = {
+            1: [
+                {'no': 1, 'tim': '111', 'ext': '.jpg', 'md5': 'h1', 'sub': '', 'com': ''},
+                {'no': 2, 'tim': '222', 'ext': '.pdf', 'md5': 'h2', 'sub': '', 'com': ''},
+            ]
+        }
+        tid_2_thread = {1: {'no': 1}}
+
+        full_pids, thumb_pids = filter_obj.get_pids_for_download(tid_2_posts, tid_2_thread)
+
+        assert full_pids == {1, 2}
+        assert thumb_pids == {2}
+
+    def test_unmakeable_thumbs_not_downloaded_when_disabled(self, mock_fetcher, db, state, mock_configs):
+        mock_configs.boards['po'] = {'dl_fm_op': True, 'dl_fm_post': True, 'dl_th_op': True, 'dl_th_post': True}
+        mock_configs.make_thumbnails = True
+        mock_configs.download_unmakeable_thumbnails = False
+        mock_configs.thumbnail_exts = normalize_exts({'.jpg', '.pdf'})
+        filter_obj = Filter(mock_fetcher, db, 'po', state)
+
+        tid_2_posts = {
+            1: [{'no': 2, 'tim': '222', 'ext': '.pdf', 'md5': 'h2', 'sub': '', 'com': ''}]
+        }
+        tid_2_thread = {1: {'no': 1}}
+
+        full_pids, thumb_pids = filter_obj.get_pids_for_download(tid_2_posts, tid_2_thread)
+
+        assert full_pids == {2}
+        assert thumb_pids == set()
+
+    def test_download_media_for_ids_with_make_thumbnails(self, mock_fetcher, db, mock_configs, monkeypatch):
         mock_configs.make_thumbnails = True
         mock_configs.boards['po'] = {'dl_th_op': True}
         mock_configs.url_full_media = 'https://i.4cdn.org/{board}/{image_id}{ext}'
         mock_configs.url_thumbnail = 'https://i.4cdn.org/{board}/{image_id}s.jpg'
         mock_configs.enforce_fsize_lte = False
         mock_configs.enforce_md5_equality = False
-        media_fp = AsagiMediaFP(mock_fetcher, str(tmp_path), db, None)
+        media_fp = AsagiMediaFP(mock_fetcher, mock_configs.media_save_path, db, None)
 
         post = {'no': 1, 'tim': '111', 'ext': '.jpg', 'md5': 'h1'}
 
         fetch = Mock(return_value=b'data')
         monkeypatch.setattr('media_fp.wrap_fetch_media_bytes', fetch)
+
+        saved = []
+        monkeypatch.setattr(media_fp, 'save', lambda *a, **k: saved.append(a))
 
         media_fp.download_media_for_ids('po', {1: post}, set(), {1})
 
@@ -599,15 +814,19 @@ class TestGetPidsForDownload:
 
 
 class TestEnsureThumbnail:
-    def test_missing_thumb_created(self, mock_fetcher, db, mock_configs, tmp_path, monkeypatch):
+    def test_missing_thumb_created(self, mock_fetcher, db, mock_configs, monkeypatch):
         mock_configs.make_thumbnails = True
-        media_fp = AsagiMediaFP(mock_fetcher, str(tmp_path), db, None)
+        media_fp = AsagiMediaFP(mock_fetcher, mock_configs.media_save_path, db, None)
         post = {'tim': 123456, 'ext': '.jpg', 'md5': 'h1'}
 
         dirpath, filename = media_fp.get_dirpath_and_filename('po', MediaType.full_media, post)
-        os.makedirs(dirpath, exist_ok=True)
-        with open(os.path.join(dirpath, filename), 'wb'):
-            pass
+        filepath = os.path.join(dirpath, filename)
+        dirpath_thumb, filename_thumb = media_fp.get_dirpath_and_filename('po', MediaType.thumbnail, post)
+        filepath_thumb = os.path.join(dirpath_thumb, filename_thumb)
+
+        # full media exists, thumbnail does not
+        monkeypatch.setattr('media_fp.os.path.isfile', lambda p: p == filepath)
+        monkeypatch.setattr('media_fp.makedir_p', lambda d: None)
 
         calls = []
         monkeypatch.setattr('media_fp.create_thumbnail', lambda *a, **k: calls.append((a, k)))
@@ -616,24 +835,57 @@ class TestEnsureThumbnail:
 
         assert len(calls) == 1
         _, full_path, thumb_path = calls[0][0]
-        assert os.path.isfile(full_path)
+        assert full_path == filepath
+        assert thumb_path == filepath_thumb
         assert thumb_path.endswith('123456s.jpg')
 
-    def test_unsupported_media_skipped(self, mock_fetcher, db, mock_configs, tmp_path, monkeypatch):
+    def test_existing_thumb_skipped(self, mock_fetcher, db, mock_configs, monkeypatch):
         mock_configs.make_thumbnails = True
-        media_fp = AsagiMediaFP(mock_fetcher, str(tmp_path), db, None)
-        post = {'tim': 123456, 'ext': '.pdf', 'md5': 'h1'}
+        media_fp = AsagiMediaFP(mock_fetcher, mock_configs.media_save_path, db, None)
+        post = {'tim': 123456, 'ext': '.jpg', 'md5': 'h1'}
 
         dirpath, filename = media_fp.get_dirpath_and_filename('po', MediaType.full_media, post)
-        os.makedirs(dirpath, exist_ok=True)
-        with open(os.path.join(dirpath, filename), 'wb'):
-            pass
+        filepath = os.path.join(dirpath, filename)
+        dirpath_thumb, filename_thumb = media_fp.get_dirpath_and_filename('po', MediaType.thumbnail, post)
+        filepath_thumb = os.path.join(dirpath_thumb, filename_thumb)
+
+        monkeypatch.setattr('media_fp.os.path.isfile', lambda p: p in (filepath, filepath_thumb))
 
         calls = []
         monkeypatch.setattr('media_fp.create_thumbnail', lambda *a, **k: calls.append((a, k)))
 
         media_fp.ensure_thumbnail(post, 'po')
 
+        assert calls == []
+
+    def test_unsupported_media_skipped(self, mock_fetcher, db, mock_configs, monkeypatch):
+        mock_configs.make_thumbnails = True
+        mock_configs.thumbnail_exts = normalize_exts({'.jpg', '.webm', '.pdf', '.txt'})
+        media_fp = AsagiMediaFP(mock_fetcher, mock_configs.media_save_path, db, None)
+        post = {'tim': 123456, 'ext': '.mp3', 'md5': 'h1'}
+
+        calls = []
+        monkeypatch.setattr('media_fp.create_thumbnail', lambda *a, **k: calls.append((a, k)))
+
+        media_fp.ensure_thumbnail(post, 'po')
+
+        assert calls == []
+
+    def test_non_creatable_ext_skipped_before_makedir(self, mock_fetcher, db, mock_configs, monkeypatch):
+        mock_configs.make_thumbnails = True
+        mock_configs.thumbnail_exts = normalize_exts({'.jpg', '.pdf'})
+        media_fp = AsagiMediaFP(mock_fetcher, mock_configs.media_save_path, db, None)
+        post = {'tim': 123456, 'ext': '.pdf', 'md5': 'h1'}
+
+        makedir = Mock()
+        monkeypatch.setattr('utils.makedir_p', makedir)
+
+        calls = []
+        monkeypatch.setattr('media_fp.create_thumbnail', lambda *a, **k: calls.append((a, k)))
+
+        media_fp.ensure_thumbnail(post, 'po')
+
+        makedir.assert_not_called()
         assert calls == []
 
 

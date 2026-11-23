@@ -33,7 +33,7 @@ class Fetcher:
             sleep(request_cooldown_sec, add_random=add_random)
 
         if resp.status_code == 304:
-            if self.should_use_http_cache():
+            if self.state:
                 last_modified_header = resp.headers.get('Last-Modified')
                 if last_modified_header:
                     self.state.set_http_last_modified(url, last_modified_header)
@@ -41,7 +41,7 @@ class Fetcher:
             return dict()
 
         if resp.status_code == 200:
-            if self.should_use_http_cache():
+            if self.state:
                 last_modified_header = resp.headers.get('Last-Modified')
                 if last_modified_header:
                     self.state.set_http_last_modified(url, last_modified_header)

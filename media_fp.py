@@ -14,11 +14,15 @@ from utils import (
     sleep,
     get_md5_b64_hash,
     get_fs_safe_b64,
-    is_post_media_file_image,
-    is_post_media_file_video,
+    is_ext_allowed,
     log_util,
     makedir_p,
+    normalize_ext,
+    supported_make_thumbnail_exts,
 )
+
+
+JPEG_MAGIC_BYTES = b'\xff\xd8'
 
 
 def get_board_has_dl_th(board: str) -> bool:
@@ -109,7 +113,7 @@ class MediaFP(ABC):
         if not configs.make_thumbnails:
             return
 
-        if not (is_post_media_file_image(post) or is_post_media_file_video(post)):
+        if not is_ext_allowed(post.get('ext'), configs.thumbnail_exts):
             return
 
         dirpath, filename = self.get_dirpath_and_filename(board, MediaType.full_media, post)
@@ -122,7 +126,6 @@ class MediaFP(ABC):
         if os.path.isfile(filepath_thumb):
             return
 
-        makedir_p(dirpath_thumb)
         create_thumbnail(
             post,
             filepath,
@@ -151,6 +154,11 @@ class MediaFP(ABC):
                 log_util(configs.logger, f'Not saving: {url=} - {fsize_computed=} > {fsize_api=}')
                 return False
 
+        if media_type == MediaType.thumbnail:
+            if not content.startswith(JPEG_MAGIC_BYTES):
+                log_util(configs.logger, f'Not saving: {url=} - thumbnail content is not a jpg')
+                return False
+
         if media_type == MediaType.full_media:
             if configs.enforce_md5_equality and (md5_api := post['md5']):
 
@@ -165,6 +173,10 @@ class MediaFP(ABC):
 
 
     def download_full_media(self, url: str, post: dict, board: str):
+        if not normalize_ext(post.get('ext')):
+            configs.logger.warning(f'[{board}] Post {post.get("no")} has no file extension, skipping full media download')
+            return
+
         dirpath, filename = self.get_dirpath_and_filename(board, MediaType.full_media, post)
         filepath = os.path.join(dirpath, filename)
 
@@ -222,18 +234,23 @@ class MediaFP(ABC):
             url = get_media_url(configs.url_full_media, board, post, MediaType.full_media)
             self.download_full_media(url, post, board)
 
-        if configs.make_thumbnails and not get_board_has_dl_th(board):
+        if not configs.url_thumbnail:
+            return
+
+        if configs.make_thumbnails and not thumb_pids:
             return
 
         for pid in thumb_pids:
-            if configs.make_thumbnails and pid in full_pids:
-                continue
-
             if pid not in pid_2_post:
                 configs.logger.info(f'[{board}] Post {pid} not found in pid_2_post, skipping thumbnail download')
                 continue
 
             post = pid_2_post[pid]
+
+            # dont download thumbs if we will generate them from full media
+            if configs.make_thumbnails and pid in full_pids and is_ext_allowed(post.get('ext'), supported_make_thumbnail_exts):
+                continue
+
             url = get_media_url(configs.url_thumbnail, board, post, MediaType.thumbnail)
             self.download_thumbnail(url, post, board)
 

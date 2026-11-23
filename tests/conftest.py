@@ -1,4 +1,6 @@
+import builtins
 import json
+import os
 
 import pytest
 
@@ -12,6 +14,31 @@ def no_network(monkeypatch):
         raise RuntimeError('Network access is disabled in tests')
 
     monkeypatch.setattr('requests.sessions.Session.request', blocked)
+
+
+@pytest.fixture(autouse=True)
+def no_fs_writes(monkeypatch):
+    def deny(*args, **kwargs):
+        raise AssertionError('Filesystem writes are disabled in tests')
+
+    real_open = builtins.open
+
+    def guarded_open(file, mode='r', *args, **kwargs):
+        if any(m in mode for m in ('w', 'a', 'x', '+')):
+            raise AssertionError(f'File writes are disabled in tests: {file!r} mode={mode!r}')
+        return real_open(file, mode, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, 'open', guarded_open)
+    monkeypatch.setattr(os, 'makedirs', deny)
+    monkeypatch.setattr(os, 'mkdir', deny)
+    monkeypatch.setattr(os, 'rename', deny)
+    monkeypatch.setattr(os, 'replace', deny)
+    monkeypatch.setattr(os, 'remove', deny)
+    monkeypatch.setattr(os, 'unlink', deny)
+    monkeypatch.setattr(os, 'rmdir', deny)
+    monkeypatch.setattr(os, 'symlink', deny)
+    monkeypatch.setattr(os, 'link', deny)
+    monkeypatch.setattr(os, 'truncate', deny)
 
 
 def create_test_sqlite_db(board: str) -> SqliteDb:

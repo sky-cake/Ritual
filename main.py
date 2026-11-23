@@ -16,15 +16,20 @@ from utils import (
     fetch_and_save_boards_json,
     load_boards_with_archive,
     make_path,
+    normalize_exts,
     read_json,
     setup_logger,
     sleep,
+    supported_exts,
     assert_thumbnail_deps
 )
 
 
 class Init:
     def __init__(self):
+        configs.full_media_exts = normalize_exts(configs.full_media_exts)
+        configs.thumbnail_exts = normalize_exts(configs.thumbnail_exts)
+
         if not os.path.isdir(configs.media_save_path):
             os.makedirs(configs.media_save_path, mode=0o775)
             os.chmod(configs.media_save_path, 0o775)
@@ -36,6 +41,10 @@ class Init:
             file_rotate_size=configs.log_filesize,
             max_files=configs.log_max_files,
         )
+
+        unknown_exts = (configs.full_media_exts | configs.thumbnail_exts) - supported_exts
+        if unknown_exts:
+            configs.logger.warning(f'Unknown file extensions configured: {unknown_exts}')
 
         if configs.make_thumbnails:
             assert_thumbnail_deps(configs.logger)
@@ -126,6 +135,9 @@ def main():
     fetcher = Fetcher(state)
 
     scanner_db = ScannerDb(configs.scanner_db_path) if configs.scanner_db_enabled else None
+    if scanner_db:
+        scanner_db.connect()
+        scanner_db.init_db()
 
     media_fp = get_media_fp(fetcher, ritual_db, scanner_db)
 

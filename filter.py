@@ -10,6 +10,8 @@ from utils import (
     db_row_to_media_post,
     extract_text_from_html,
     fullmatch_sub_and_com,
+    is_ext_allowed,
+    supported_make_thumbnail_exts,
     post_has_file,
 )
 
@@ -71,12 +73,15 @@ class Filter:
         - If only a whitelist is specified, archive whitelisted posts, and skip everything else.
         - If no lists are specified, archive everything.
         """
+        # subject-only threads fall back to the subject so the regex filters still get a chance to run
+        filter_len_text = comment if comment else subject
+
         op_comment_min_chars = configs.boards[self.board].get('op_comment_min_chars')
-        if op_comment_min_chars and len(comment) < op_comment_min_chars:
+        if op_comment_min_chars and len(filter_len_text) < op_comment_min_chars:
             return False
 
         op_comment_min_chars_unique = configs.boards[self.board].get('op_comment_min_chars_unique')
-        if op_comment_min_chars_unique and len(set(comment)) < op_comment_min_chars_unique:
+        if op_comment_min_chars_unique and len(set(filter_len_text)) < op_comment_min_chars_unique:
             return False
 
         blacklist_post_filter = configs.boards[self.board].get('blacklist') if blacklist is None else blacklist
@@ -164,7 +169,8 @@ class Filter:
                     pattern_or_bool_thumbs = dl_th_post
 
                 if should_dl_fm_thread or self.is_media_needed_conf(post, pattern_or_bool_full_media):
-                    full_pids.add(pid)
+                    if is_ext_allowed(post.get('ext'), configs.full_media_exts):
+                        full_pids.add(pid)
 
                 # do we care about downloading thumbs?
                 if not make_thumbnails or board_has_dl_th:
@@ -172,8 +178,20 @@ class Filter:
                     # specific post filtering
                     if should_dl_th_thread or self.is_media_needed_conf(post, pattern_or_bool_thumbs):
 
-                        # dont download thumbs if we will generate them from full media
-                        if not (make_thumbnails and pid in full_pids):
+                        thumb_makeable = is_ext_allowed(post.get('ext'), supported_make_thumbnail_exts)
+
+                        if make_thumbnails:
+                            # dont download thumbs if we will generate them from full media
+                            # unmakeable exts (pdf, djvu, txt) fall back to downloading
+                            should_add = (
+                                (not thumb_makeable and configs.download_unmakeable_thumbnails)
+                                or
+                                (thumb_makeable and pid not in full_pids)
+                            )
+                        else:
+                            should_add = True
+
+                        if should_add and is_ext_allowed(post.get('ext'), configs.thumbnail_exts):
                             thumb_pids.add(pid)
 
         return full_pids, thumb_pids
