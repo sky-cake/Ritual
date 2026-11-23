@@ -16,6 +16,10 @@ use_http_cache_first_loop = True
 ensure_media_downloaded = True
 
 
+# if False, the first loop archives thread text only
+download_media_first_loop = True
+
+
 ## "enforce" results in not saving a file to disk
 
 # Do you want to enforce (downloaded file md5) == (API reported md5) ?

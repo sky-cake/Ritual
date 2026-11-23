@@ -32,6 +32,7 @@ def mock_configs(monkeypatch, tmp_path):
         boards_with_archive=[],
         use_http_cache_first_loop=False,
         ensure_media_downloaded=True,
+        download_media_first_loop=True,
         make_thumbnails=False,
         media_save_path=str(tmp_path),
         db_type='sqlite',
